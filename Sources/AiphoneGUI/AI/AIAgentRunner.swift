@@ -75,7 +75,8 @@ final class AgentRunStore: ObservableObject {
         }
 
         let configurations = Dictionary(uniqueKeysWithValues: uniqueDeviceIDs.map { deviceID in
-            (deviceID, NativeAgentConfiguration(settings: settings, devicePersona: deviceProfiles[deviceID]?.persona ?? ""))
+            let profile = deviceProfiles[deviceID] ?? ADBDeviceProfile()
+            return (deviceID, NativeAgentConfiguration(settings: settings, profile: profile))
         })
 
         guard configurations.values.allSatisfy({ !$0.baseURL.isEmpty }) else {
@@ -117,9 +118,11 @@ final class AgentRunStore: ObservableObject {
                         guard let self else { return }
 
                         await MainActor.run {
-                            self.appendLog("Starting native Open-AutoGLM agent\n", for: deviceID) 
+                            self.appendLog("Starting native Open-AutoGLM agent\n", for: deviceID)
                             self.appendLog("Device: \(deviceID)\n", for: deviceID)
-                            self.appendLog("Device persona: \(configuration.devicePersona.isEmpty ? "None" : configuration.devicePersona)\n", for: deviceID) 
+                            self.appendLog("Device persona: \(configuration.devicePersona.isEmpty ? "None" : configuration.devicePersona)\n", for: deviceID)
+                            self.appendLog("Preferred apps: \(configuration.preferredApps.isEmpty ? "None" : configuration.preferredApps)\n", for: deviceID)
+                            self.appendLog("Device notes: \(configuration.deviceNotes.isEmpty ? "None" : configuration.deviceNotes)\n", for: deviceID)
                         }
 
                         let agent = NativePhoneAgent(
@@ -317,6 +320,8 @@ private struct NativeAgentConfiguration: Sendable {
     let frequencyPenalty: Double
     let languageCode: String
     let devicePersona: String
+    let preferredApps: String
+    let deviceNotes: String
     let languageEnhancerBaseURL: String
     let languageEnhancerAPIKey: String
     let languageEnhancerModel: String
@@ -326,6 +331,16 @@ private struct NativeAgentConfiguration: Sendable {
         return trimmed.isEmpty
             ? "Careful, context-aware, detail-oriented assistant who matches the user's language naturally and double-checks tone before replying."
             : trimmed
+    }
+
+    var effectivePreferredApps: String {
+        let trimmed = preferredApps.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "No preferred apps were specified for this device." : trimmed
+    }
+
+    var effectiveDeviceNotes: String {
+        let trimmed = deviceNotes.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "No extra device notes or safety rules were provided for this device." : trimmed
     }
 
     var resolvedLanguageEnhancerBaseURL: String {
@@ -381,7 +396,7 @@ private struct NativeAgentConfiguration: Sendable {
     }
 
     @MainActor
-    init(settings: AISettingsStore, devicePersona: String = "") {
+    init(settings: AISettingsStore, devicePersona: String = "", preferredApps: String = "", deviceNotes: String = "") {
         self.baseURL = settings.openGLMServer.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedKey = settings.openGLMKey.trimmingCharacters(in: .whitespacesAndNewlines)
         self.apiKey = trimmedKey.isEmpty ? "EMPTY" : trimmedKey
@@ -393,10 +408,22 @@ private struct NativeAgentConfiguration: Sendable {
         self.frequencyPenalty = 0.2
         self.languageCode = "en"
         self.devicePersona = devicePersona.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.preferredApps = preferredApps.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.deviceNotes = deviceNotes.trimmingCharacters(in: .whitespacesAndNewlines)
         self.languageEnhancerBaseURL = settings.languageEnhancerServer.trimmingCharacters(in: .whitespacesAndNewlines)
         let enhancerKey = settings.languageEnhancerKey.trimmingCharacters(in: .whitespacesAndNewlines)
         self.languageEnhancerAPIKey = enhancerKey.isEmpty ? "EMPTY" : enhancerKey
         self.languageEnhancerModel = settings.languageEnhancerModel.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    @MainActor
+    init(settings: AISettingsStore, profile: ADBDeviceProfile) {
+        self.init(
+            settings: settings,
+            devicePersona: profile.persona,
+            preferredApps: profile.preferredApps,
+            deviceNotes: profile.notes
+        )
     }
 }
 
@@ -415,7 +442,14 @@ private struct NativePhoneAgent: Sendable {
         }
 
         var context: [NativeAgentMessage] = [
-            .system(text: NativeAgentPromptBuilder.systemPrompt(userTask: preparedTask, devicePersona: configuration.effectiveDevicePersona))
+            .system(
+                text: NativeAgentPromptBuilder.systemPrompt(
+                    userTask: preparedTask,
+                    devicePersona: configuration.effectiveDevicePersona,
+                    preferredApps: configuration.effectivePreferredApps,
+                    deviceNotes: configuration.effectiveDeviceNotes
+                )
+            )
         ]
 
         for step in 1...configuration.maxSteps {
@@ -424,7 +458,12 @@ private struct NativePhoneAgent: Sendable {
                 throw CancellationError()
             }
 
-            await statusHandler("Capturing screen... step \(step)/\(configuration.maxSteps)")
+            if step == 1 {
+                await statusHandler("Starting the agent…")
+            } else {
+                await statusHandler("Capturing screen... step \(step)/\(configuration.maxSteps)")
+            }
+
             let screenshot = try provider.getScreenshot(deviceID: deviceID)
             let currentApp = (try? provider.getCurrentApp(deviceID: deviceID)) ?? "Unknown"
             let runtime = ADBDeviceRuntimeStatus(
@@ -452,6 +491,11 @@ private struct NativePhoneAgent: Sendable {
                 textContent = """
                 User request (keep the same language as this request; never switch to Chinese unless the request itself is Chinese):
                 \(effectiveTask)
+
+                ** Device Preferences **
+
+                Preferred apps: \(configuration.effectivePreferredApps)
+                Device notes: \(configuration.effectiveDeviceNotes)
 
                 ** Screen Info **
 
@@ -693,7 +737,9 @@ private struct NativePhoneAgent: Sendable {
                 task: trimmedTask,
                 currentApp: runtime.currentApp,
                 screenInfo: screenInfo,
-                devicePersona: configuration.effectiveDevicePersona
+                devicePersona: configuration.effectiveDevicePersona,
+                preferredApps: configuration.effectivePreferredApps,
+                deviceNotes: configuration.effectiveDeviceNotes
             )
             let finalTask = rewrittenTask.trimmingCharacters(in: .whitespacesAndNewlines)
 
@@ -734,6 +780,8 @@ private struct NativePhoneAgent: Sendable {
                 currentApp: runtime.currentApp,
                 screenInfo: screenInfo,
                 devicePersona: configuration.effectiveDevicePersona,
+                preferredApps: configuration.effectivePreferredApps,
+                deviceNotes: configuration.effectiveDeviceNotes,
                 modelThinking: modelThinking,
                 format: "text"
             )
@@ -766,6 +814,8 @@ private struct NativePhoneAgent: Sendable {
                 currentApp: runtime.currentApp,
                 screenInfo: screenInfo,
                 devicePersona: configuration.effectiveDevicePersona,
+                preferredApps: configuration.effectivePreferredApps,
+                deviceNotes: configuration.effectiveDeviceNotes,
                 modelThinking: modelThinking,
                 format: "md"
             )
@@ -801,6 +851,8 @@ private struct NativePhoneAgent: Sendable {
                 currentApp: runtime.currentApp,
                 screenInfo: screenInfo,
                 devicePersona: configuration.effectiveDevicePersona,
+                preferredApps: configuration.effectivePreferredApps,
+                deviceNotes: configuration.effectiveDeviceNotes,
                 modelThinking: modelThinking
             )
             let finalText = generatedText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1060,9 +1112,13 @@ private struct NativeLanguageEnhancerClient: Sendable {
         task: String,
         currentApp: String?,
         screenInfo: String,
-        devicePersona: String
+        devicePersona: String,
+        preferredApps: String = "",
+        deviceNotes: String = ""
     ) async throws -> String {
         let personaText = normalizedPersonaText(from: devicePersona)
+        let preferredAppsText = normalizedPreferredAppsText(from: preferredApps)
+        let notesText = normalizedDeviceNotesText(from: deviceNotes)
 
         let systemPrompt = """
         You rewrite a user's phone-assistant request into a clearer, more explicit task instruction for another Android automation model.
@@ -1084,6 +1140,8 @@ private struct NativeLanguageEnhancerClient: Sendable {
         CONTEXT :
         Current app: \(currentApp ?? "Unknown")
         Device persona: \(personaText)
+        Preferred apps: \(preferredAppsText)
+        Device notes: \(notesText)
         Screen context:
         \(screenInfo)
 
@@ -1107,10 +1165,14 @@ private struct NativeLanguageEnhancerClient: Sendable {
         currentApp: String?,
         screenInfo: String,
         devicePersona: String,
+        preferredApps: String = "",
+        deviceNotes: String = "",
         modelThinking: String,
         format: String
     ) async throws -> String {
         let personaText = normalizedPersonaText(from: devicePersona)
+        let preferredAppsText = normalizedPreferredAppsText(from: preferredApps)
+        let notesText = normalizedDeviceNotesText(from: deviceNotes)
         let requestedFormat = format.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "md" : format.trimmingCharacters(in: .whitespacesAndNewlines)
         let systemPrompt = """
         You are the Language Enhancer for an Android phone agent.
@@ -1140,6 +1202,8 @@ private struct NativeLanguageEnhancerClient: Sendable {
         CONTEXT:
         Current app: \(currentApp ?? "Unknown")
         Device persona: \(personaText)
+        Preferred apps: \(preferredAppsText)
+        Device notes: \(notesText)
         AutoGLM reasoning:
         \(modelThinking)
         Screen context:
@@ -1163,9 +1227,13 @@ private struct NativeLanguageEnhancerClient: Sendable {
         currentApp: String?,
         screenInfo: String,
         devicePersona: String,
+        preferredApps: String = "",
+        deviceNotes: String = "",
         modelThinking: String
     ) async throws -> String {
         let personaText = normalizedPersonaText(from: devicePersona)
+        let preferredAppsText = normalizedPreferredAppsText(from: preferredApps)
+        let notesText = normalizedDeviceNotesText(from: deviceNotes)
         let draftText = requestedText.isEmpty
             ? "[AutoGLM did not provide explicit text. Generate the final text from the user prompt and visual context.]"
             : requestedText
@@ -1205,6 +1273,12 @@ private struct NativeLanguageEnhancerClient: Sendable {
         Device persona:
         \(personaText)
 
+        Preferred apps:
+        \(preferredAppsText)
+
+        Device notes:
+        \(notesText)
+
         AutoGLM reasoning:
         \(modelThinking)
 
@@ -1230,6 +1304,16 @@ private struct NativeLanguageEnhancerClient: Sendable {
         return trimmed.isEmpty
             ? "Careful, context-aware, detail-oriented assistant who matches the user's language naturally and double-checks tone before replying."
             : trimmed
+    }
+
+    private func normalizedPreferredAppsText(from preferredApps: String) -> String {
+        let trimmed = preferredApps.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "No preferred apps were specified for this device." : trimmed
+    }
+
+    private func normalizedDeviceNotesText(from deviceNotes: String) -> String {
+        let trimmed = deviceNotes.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "No extra device notes or safety rules were provided for this device." : trimmed
     }
 
     private func requestPlainText(
@@ -1764,7 +1848,12 @@ private enum NativeResponseParser {
 }
 
 private enum NativeAgentPromptBuilder {
-    static func systemPrompt(userTask: String, devicePersona: String = "") -> String {
+    static func systemPrompt(
+        userTask: String,
+        devicePersona: String = "",
+        preferredApps: String = "",
+        deviceNotes: String = ""
+    ) -> String {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyy-MM-dd, EEEE"
@@ -1773,6 +1862,12 @@ private enum NativeAgentPromptBuilder {
         let personaText = devicePersona.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ? "Careful, context-aware, detail-oriented assistant who matches the user's language naturally and double-checks tone before replying."
             : devicePersona.trimmingCharacters(in: .whitespacesAndNewlines)
+        let preferredAppsText = preferredApps.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? "No preferred apps were specified for this device."
+            : preferredApps.trimmingCharacters(in: .whitespacesAndNewlines)
+        let notesText = deviceNotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? "No extra device notes or safety rules were provided for this device."
+            : deviceNotes.trimmingCharacters(in: .whitespacesAndNewlines)
 
         return """
         The current date: \(formattedDate)
@@ -1781,6 +1876,8 @@ private enum NativeAgentPromptBuilder {
 
         User request language to keep: \(languageName)
         Device persona for this run: \(personaText)
+        Preferred apps for this device: \(preferredAppsText)
+        Device notes and safety rules: \(notesText)
 
         Your response format must be structured as follows:
         <think>
@@ -1809,6 +1906,8 @@ private enum NativeAgentPromptBuilder {
         - Keep the same language as the user's request for your reasoning and any generated text.
         - The user's request language for this run is \(languageName).
         - Treat the device persona as required context for tone, depth, and interaction style, but never change the user's core goal.
+        - Prefer apps listed in the device preferences when multiple app choices can satisfy the task.
+        - Respect the device notes, account context, and any safety rules whenever they are relevant.
         - Never switch to Chinese unless the user's request is explicitly written in Chinese.
         - If the user's request is in Indonesian, stay in Indonesian.
         - If you want to open an app and you are not fully sure which package or exact app is installed, call `ListApp` first.
@@ -1897,8 +1996,97 @@ private enum NativeAgentError: LocalizedError {
     }
 }
 
+private struct AgentLogScrollObserver: NSViewRepresentable {
+    let threshold: CGFloat
+    let onScrollStateChange: (Bool) -> Void
+
+    func makeNSView(context: Context) -> ObserverView {
+        let view = ObserverView()
+        view.threshold = threshold
+        view.onScrollStateChange = onScrollStateChange
+        return view
+    }
+
+    func updateNSView(_ nsView: ObserverView, context: Context) {
+        nsView.threshold = threshold
+        nsView.onScrollStateChange = onScrollStateChange
+
+        DispatchQueue.main.async {
+            nsView.attachIfNeeded()
+        }
+    }
+
+    final class ObserverView: NSView {
+        var threshold: CGFloat = 24
+        var onScrollStateChange: ((Bool) -> Void)?
+
+        private weak var observedScrollView: NSScrollView?
+        private var boundsObserver: NSObjectProtocol?
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            attachIfNeeded()
+        }
+
+        override func viewDidMoveToSuperview() {
+            super.viewDidMoveToSuperview()
+            attachIfNeeded()
+        }
+
+        func attachIfNeeded() {
+            guard let scrollView = enclosingScrollView ?? superview?.enclosingScrollView else { return }
+
+            if scrollView === observedScrollView {
+                notifyScrollState()
+                return
+            }
+
+            detachObserver()
+            observedScrollView = scrollView
+            scrollView.contentView.postsBoundsChangedNotifications = true
+
+            boundsObserver = NotificationCenter.default.addObserver(
+                forName: NSView.boundsDidChangeNotification,
+                object: scrollView.contentView,
+                queue: .main
+            ) { [weak self] _ in
+                self?.notifyScrollState()
+            }
+
+            notifyScrollState()
+        }
+
+        private func notifyScrollState() {
+            guard let scrollView = observedScrollView,
+                  let documentView = scrollView.documentView else { return }
+
+            let visibleMaxY = scrollView.contentView.bounds.maxY
+            let remainingDistance = documentView.bounds.maxY - visibleMaxY
+            onScrollStateChange?(remainingDistance <= threshold)
+        }
+
+        private func detachObserver() {
+            if let boundsObserver {
+                NotificationCenter.default.removeObserver(boundsObserver)
+                self.boundsObserver = nil
+            }
+            observedScrollView = nil
+        }
+
+        deinit {
+            detachObserver()
+        }
+    }
+}
+
 struct AgentLogWindowView: View {
     @EnvironmentObject private var runner: AgentRunStore
+    @State private var shouldAutoScroll = true
+    @State private var isProgrammaticScroll = false
+    @State private var autoScrollRequestID = UUID()
+
+    private let logBottomAnchorID = "agent-log-bottom-anchor"
+    private let logBottomThreshold: CGFloat = 24
 
     private var currentRun: DeviceAgentRunSnapshot? {
         runner.selectedRun
@@ -1927,6 +2115,50 @@ struct AgentLogWindowView: View {
         }
 
         return baseColor.opacity(isSelected ? 0.28 : 0.16)
+    }
+
+    private var displayedLogText: String {
+        let text = currentRun?.logText ?? runner.logText
+        return text.isEmpty ? "No AI activity yet." : text
+    }
+
+    private func scrollToBottom(using proxy: ScrollViewProxy, animated: Bool = false) {
+        let action = {
+            proxy.scrollTo(logBottomAnchorID, anchor: .bottom)
+        }
+
+        if animated {
+            withAnimation(.easeOut(duration: 0.18)) {
+                action()
+            }
+        } else {
+            action()
+        }
+    }
+
+    private func requestAutoScroll(using proxy: ScrollViewProxy, animated: Bool = false) {
+        guard shouldAutoScroll else { return }
+
+        let requestID = UUID()
+        autoScrollRequestID = requestID
+        isProgrammaticScroll = true
+
+        let delays: [TimeInterval] = [0.0, 0.03, 0.08, 0.16, 0.28]
+
+        for (index, delay) in delays.enumerated() {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                guard autoScrollRequestID == requestID else { return }
+                scrollToBottom(using: proxy, animated: animated && index == 0)
+
+                if index == delays.count - 1 {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                        if autoScrollRequestID == requestID {
+                            isProgrammaticScroll = false
+                        }
+                    }
+                }
+            }
+        }
     }
 
     var body: some View {
@@ -2021,17 +2253,50 @@ struct AgentLogWindowView: View {
                 }
             }
 
-            ScrollView {
-                Text((currentRun?.logText ?? runner.logText).isEmpty ? "No AI activity yet." : (currentRun?.logText ?? runner.logText))
-                    .font(.system(size: 11, design: .monospaced))
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .topLeading)
-                    .padding(12)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text(displayedLogText)
+                            .font(.system(size: 11, design: .monospaced))
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .topLeading)
+                            .padding(12)
+
+                        Color.clear
+                            .frame(height: 1)
+                            .id(logBottomAnchorID)
+                    }
+                }
+                .background(
+                    AgentLogScrollObserver(threshold: logBottomThreshold) { isAtBottom in
+                        if isProgrammaticScroll {
+                            if isAtBottom {
+                                isProgrammaticScroll = false
+                            }
+                            return
+                        }
+
+                        if shouldAutoScroll != isAtBottom {
+                            shouldAutoScroll = isAtBottom
+                        }
+                    }
+                )
+                .onAppear {
+                    shouldAutoScroll = true
+                    requestAutoScroll(using: proxy)
+                }
+                .onChange(of: displayedLogText) { _ in
+                    requestAutoScroll(using: proxy, animated: true)
+                }
+                .onChange(of: runner.selectedDeviceRunID) { _ in
+                    shouldAutoScroll = true
+                    requestAutoScroll(using: proxy)
+                }
+                .background(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(Color(nsColor: .textBackgroundColor))
+                )
             }
-            .background(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(Color(nsColor: .textBackgroundColor))
-            )
         }
         .padding(16)
         .frame(minWidth: 760, minHeight: 480)

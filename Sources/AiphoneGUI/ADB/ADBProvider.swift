@@ -1042,7 +1042,7 @@ final class ADBProvider: ADBProviding, @unchecked Sendable {
     }
 
     private func transportImagePayload(from pngData: Data) -> (data: Data, mimeType: String) {
-        if let webpData = webPData(from: pngData, quality: 0.72), webpData.count < pngData.count {
+        if let webpData = webPData(from: pngData, quality: 0.5), webpData.count < pngData.count {
             return (webpData, "image/webp")
         }
         return (pngData, "image/png")

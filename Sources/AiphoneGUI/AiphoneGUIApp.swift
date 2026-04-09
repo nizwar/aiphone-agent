@@ -18,12 +18,12 @@ struct AIPhoneApp: App {
                 .environmentObject(deviceProfileStore)
                 .environmentObject(scrcpyLaunchStore)
                 .environmentObject(agentRunStore)
-                .ignoresSafeArea(.container, edges: .top)
+                .ignoresSafeArea(.container, edges: .vertical)
                 .background(WindowChromeConfigurator())
         }
         .windowStyle(.hiddenTitleBar)
         .windowResizability(.contentSize)
-        .defaultSize(width: 680, height: 108)
+        .defaultSize(width: 680, height: 96)
 
         Window("Settings", id: "settings") {
             AISettingsWindowView()
@@ -180,12 +180,13 @@ struct ContentView: View {
                 )
                 .padding(.horizontal, 10)
                 .padding(.top, 6)
-                .padding(.bottom, 4)
+                .padding(.bottom, 10)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .frame(maxWidth: .infinity,   alignment: .top)
         }
         .frame(width: 680)
-        .frame(minHeight: 108, alignment: .top)
+        .fixedSize(horizontal: false, vertical: true)
+        .frame(minHeight: 80, alignment: .top)
         .background(Color.white.opacity(0.05))
         .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
         .overlay(
@@ -516,6 +517,7 @@ struct WindowChromeConfigurator: NSViewRepresentable {
         window.styleMask.insert(.fullSizeContentView)
         window.styleMask.insert(.titled)
         window.styleMask.remove(.borderless)
+        window.styleMask.remove(.resizable)
         window.isMovableByWindowBackground = false
         window.backgroundColor = .clear
         window.isOpaque = false
