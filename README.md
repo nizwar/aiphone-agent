@@ -4,6 +4,8 @@ AI-Phone is a native macOS SwiftUI application for Android device management and
 
 Author: Mochamad Nizwar Syafuan
 
+> **Important:** The built-in AI automation feature is designed exclusively for [Open-AutoGLM](https://github.com/zai-org/Open-AutoGLM) models. If you want to use a different AI agent or model provider, consider using [aiphone-agent](https://github.com/nizwar/aiphone-agent) instead — an MCP-based alternative that works with any compatible agent framework.
+
 ## Overview
 
 AI-Phone gives you a native macOS interface for managing Android devices without switching between terminal windows. Core capabilities include:
@@ -67,57 +69,6 @@ AI-Phone gives you a native macOS interface for managing Android devices without
 
 - scrcpy launch integration with configurable window, video, audio, and control settings
 
-## Project Structure
-
-```text
-.
-├── Package.swift
-├── README.md
-├── project.yml
-├── build.sh
-├── scrcpy_playground.sh
-└── Sources/
-    ├── App/
-    │   ├── AppMain.swift
-    │   ├── AI-Phone.entitlements
-    │   ├── Info.plist
-    │   ├── ADB/
-    │   │   ├── ADBAppCatalog.swift
-    │   │   ├── ADBAppManagerView.swift
-    │   │   ├── ADBDeviceDetailWindowView.swift
-    │   │   ├── ADBDevicesWindowView.swift
-    │   │   ├── ADBFileExplorerView.swift
-    │   │   ├── ADBModels.swift
-    │   │   └── ADBProvider.swift
-    │   ├── Agent/
-    │   │   ├── AIAgentRunner.swift
-    │   │   └── AIEndpointValidator.swift
-    │   ├── Audio/
-    │   │   └── AudioTranscriptionStore.swift
-    │   ├── Camera/
-    │   │   ├── CameraOptionsStore.swift
-    │   │   ├── CameraStreamStore.swift
-    │   │   ├── ScreenMirrorStore.swift
-    │   │   └── VirtualCameraProvider.swift
-    │   ├── Scrcpy/
-    │   │   ├── ScrcpyLaunchStore.swift
-    │   │   └── ScrcpyServerProvider.swift
-    │   ├── Settings/
-    │   │   ├── AISettingsStore.swift
-    │   │   └── AISettingsWindowView.swift
-    │   ├── Assets.xcassets/
-    │   └── Resources/
-    │       ├── AppIcon.png
-    │       ├── BrandMark.png
-    │       └── scrcpy-server
-    ├── CameraExtension/
-    │   ├── CameraExtensionMain.swift
-    │   ├── CameraExtension.entitlements
-    │   └── Info.plist
-    └── Shared/
-        └── SharedFrameBuffer.swift
-```
-
 ## Requirements
 
 - macOS 13 or later
@@ -165,12 +116,58 @@ adb devices
 
 ### 4. Configure model endpoints (optional)
 
-If you want to use the AI automation agent, open the Settings window and provide:
+The AI automation agent requires an [AutoGLM-Phone](https://huggingface.co/zai-org/AutoGLM-Phone-9B-Multilingual) model service. You can either use a hosted third-party provider or deploy the model yourself.
 
-- Server URL for an OpenAI-compatible endpoint
-- API key
-- Model name
-- Optional Language Enhancer server, key, and model for refining task text and responses
+#### Option A: Use a third-party hosted service (recommended)
+
+Several providers already host the AutoGLM model so you can get started without any GPU or local deployment:
+
+| Provider | Base URL | Model name |
+|---|---|---|
+| [z.ai](https://docs.z.ai/api-reference/introduction) | `https://api.z.ai/api/paas/v4` | `autoglm-phone-multilingual` |
+| [Novita AI](https://novita.ai/models/model-detail/zai-org-autoglm-phone-9b-multilingual) | `https://api.novita.ai/openai` | `zai-org/autoglm-phone-9b-multilingual` |
+| [Parasail](https://www.saas.parasail.io/serverless?name=auto-glm-9b-multilingual) | `https://api.parasail.io/v1` | `parasail-auto-glm-9b-multilingual` |
+
+Sign up on the provider's platform to obtain an API key, then enter the **Base URL**, **Model name**, and **API key** in the AI-Phone Settings window.
+
+#### Option B: Deploy the model yourself
+
+If you prefer to run the model on your own hardware (requires an NVIDIA GPU with 24 GB+ VRAM):
+
+1. Install [vLLM](https://docs.vllm.ai/):
+
+   ```bash
+   pip install vllm
+   ```
+
+2. Start the model service (the model weights will be downloaded automatically, ~20 GB):
+
+   ```bash
+   python3 -m vllm.entrypoints.openai.api_server \
+     --served-model-name autoglm-phone-9b-multilingual \
+     --allowed-local-media-path / \
+     --mm-encoder-tp-mode data \
+     --mm_processor_cache_type shm \
+     --mm_processor_kwargs '{"max_pixels":5000000}' \
+     --max-model-len 25480 \
+     --chat-template-content-format string \
+     --limit-mm-per-prompt '{"image":10}' \
+     --model zai-org/AutoGLM-Phone-9B-Multilingual \
+     --port 8000
+   ```
+
+3. Once the service is running, use `http://localhost:8000/v1` as the **Server URL** in AI-Phone Settings.
+
+For full deployment details, model download links, and troubleshooting, refer to the [Open-AutoGLM Model Service guide](https://github.com/zai-org/Open-AutoGLM/blob/main/README_en.md#3-start-model-service).
+
+#### Entering settings in AI-Phone
+
+Open the Settings window and provide:
+
+- **Server URL** — the base URL from your chosen provider or your self-hosted endpoint
+- **API Key** — your authentication key
+- **Model** — the model name matching the provider table above
+- **Language Enhancer** (optional) — a separate endpoint, key, and model for refining task text and final responses
 
 Use the built-in `Validate` and `Fetch` actions to confirm the configuration.
 
@@ -185,7 +182,7 @@ Use the built-in `Validate` and `Fetch` actions to confirm the configuration.
 7. Monitor progress in the Agent Activity window.
 8. Stop, inspect, and rerun tasks as needed.
 
-## Virtual Camera
+## Virtual Camera [EXPERIMENTAL]
 
 AI-Phone includes a Camera Extension system extension that exposes a connected device's mirrored screen as a virtual macOS camera. This allows other applications (video calls, OBS, etc.) to use the device screen as a camera input.
 
@@ -196,20 +193,7 @@ To install:
 3. Click "Install Extension" and approve the system extension prompt.
 
 Once installed, the virtual camera appears in any application's camera picker.
-
-## Publish-Ready Setup Notes
-
-The repository includes branding assets in `Sources/App/Resources/` and uses the bundled `BrandMark.png` at runtime for application identity.
-
-For a production release, the recommended process is:
-
-1. Open the project in Xcode.
-2. Set your team, bundle identifier, version, and signing configuration.
-3. Confirm the app name, icon, and About screen metadata.
-4. Create a Release archive.
-5. Notarize the build for macOS distribution.
-6. Export a signed `.app`, `.zip`, or `.dmg` for end users.
-
+ 
 ## Credits and Attribution
 
 AI-Phone is built on top of several excellent open-source projects:
@@ -222,3 +206,5 @@ AI-Phone is built on top of several excellent open-source projects:
 
 This software is intended for research, development, workflow automation, and personal productivity scenarios. You are responsible for ensuring that any device control, content generation, and automation behavior complies with the terms of the services you use and with applicable laws and policies.
 
+
+Made with Love and Curiosity by Mochamad Nizwar Syafuan ❤️
