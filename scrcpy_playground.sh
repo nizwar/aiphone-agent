@@ -48,14 +48,18 @@ stream_display() {
     local port="${1:-1234}"
     local max_size="${2:-0}"
 
+    push_server
     adb forward "tcp:${port}" localabstract:scrcpy
+
+    echo "Starting scrcpy server with display streaming... ${max_size:+max_size=${max_size}}"
+    echo "You can connect to the stream with: ffplay -i tcp://localhost:${port} -f h264 -flags low_delay -strict experimental -probesize 32 -analyzeduration 0 -framedrop -sync ext -vf setpts=0"
 
     adb shell "CLASSPATH=${SERVER_JAR} app_process / com.genymobile.scrcpy.Server ${SERVER_VERSION} \
         tunnel_forward=true audio=false control=false cleanup=false \
-        raw_stream=true send_frame_meta=false \
-        max_size=${max_size}" &
+        raw_stream=false send_frame_meta=true \
+        max_size=${max_size}" > /dev/null 2>&1 &
 
-    sleep 0.5
+    sleep 1
     ffplay -i "tcp://localhost:${port}" \
         -f h264 \
         -flags low_delay -strict experimental \
@@ -64,15 +68,15 @@ stream_display() {
 }
 
 stream_camera() {
-    local camera_id="${1:-0}"
+    local camera_id="10"
     local port="${2:-1234}"
     local max_size="${3:-720}"
-
     adb forward "tcp:${port}" localabstract:scrcpy
 
+    push_server
     adb shell "CLASSPATH=${SERVER_JAR} app_process / com.genymobile.scrcpy.Server ${SERVER_VERSION} \
         tunnel_forward=true audio=false control=false cleanup=false \
-        raw_stream=true send_frame_meta=false \
+        raw_stream=false send_frame_meta=true \
         video_source=camera camera_id=${camera_id} \
         max_size=${max_size}" &
 
