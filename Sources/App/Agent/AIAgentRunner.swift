@@ -11,15 +11,27 @@ struct DeviceAgentRunSnapshot: Identifiable, Equatable {
     var lastExitCode: Int32?
     var lastTask: String
     var isRunning: Bool
+    var screenshotsByStep: [Int: Data] = [:]
 
     var id: String { deviceID }
     var tabTitle: String { "[\(deviceID) \(personaEmoji)]" }
+
+    static func == (lhs: DeviceAgentRunSnapshot, rhs: DeviceAgentRunSnapshot) -> Bool {
+        lhs.deviceID == rhs.deviceID &&
+        lhs.statusMessage == rhs.statusMessage &&
+        lhs.logText == rhs.logText &&
+        lhs.lastCommand == rhs.lastCommand &&
+        lhs.lastExitCode == rhs.lastExitCode &&
+        lhs.lastTask == rhs.lastTask &&
+        lhs.isRunning == rhs.isRunning &&
+        lhs.screenshotsByStep.count == rhs.screenshotsByStep.count
+    }
 }
 
 @MainActor
 final class AgentRunStore: ObservableObject {
     @Published private(set) var isRunning = false
-    @Published var statusMessage: String = "Ready to run Open-AutoGLM."
+    @Published var statusMessage: String = "Ready to run AI Automation."
     @Published var logText: String = ""
     @Published var lastCommand: String = ""
     @Published var lastExitCode: Int32?
@@ -31,17 +43,21 @@ final class AgentRunStore: ObservableObject {
 
     private var runTask: Task<Void, Never>?
     private var didRequestCancel = false
+    private var cancelledDeviceIDs: Set<String> = []
 
     var selectedRun: DeviceAgentRunSnapshot? {
         if let selectedDeviceRunID,
-           let run = deviceRuns.first(where: { $0.deviceID == selectedDeviceRunID }) {
+            let run = deviceRuns.first(where: { $0.deviceID == selectedDeviceRunID })
+        {
             return run
         }
         return deviceRuns.first
     }
 
     @discardableResult
-    func run(task: String, deviceID: String?, settings: AISettingsStore, devicePersona: String = "") -> Bool {
+    func run(task: String, deviceID: String?, settings: AISettingsStore, devicePersona: String = "")
+        -> Bool
+    {
         guard let deviceID, !deviceID.isEmpty else {
             statusMessage = "No ready devices found. Connect a device and refresh the list first."
             return false
@@ -49,11 +65,16 @@ final class AgentRunStore: ObservableObject {
 
         var profile = ADBDeviceProfile()
         profile.persona = devicePersona
-        return run(task: task, deviceIDs: [deviceID], settings: settings, deviceProfiles: [deviceID: profile])
+        return run(
+            task: task, deviceIDs: [deviceID], settings: settings,
+            deviceProfiles: [deviceID: profile])
     }
 
     @discardableResult
-    func run(task: String, deviceIDs: [String], settings: AISettingsStore, deviceProfiles: [String: ADBDeviceProfile]) -> Bool {
+    func run(
+        task: String, deviceIDs: [String], settings: AISettingsStore,
+        deviceProfiles: [String: ADBDeviceProfile]
+    ) -> Bool {
         let trimmedTask = task.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedTask.isEmpty else {
             statusMessage = "Enter a task before sending."
@@ -74,13 +95,14 @@ final class AgentRunStore: ObservableObject {
             return false
         }
 
-        let configurations = Dictionary(uniqueKeysWithValues: uniqueDeviceIDs.map { deviceID in
-            let profile = deviceProfiles[deviceID] ?? ADBDeviceProfile()
-            return (deviceID, NativeAgentConfiguration(settings: settings, profile: profile))
-        })
+        let configurations = Dictionary(
+            uniqueKeysWithValues: uniqueDeviceIDs.map { deviceID in
+                let profile = deviceProfiles[deviceID] ?? ADBDeviceProfile()
+                return (deviceID, NativeAgentConfiguration(settings: settings, profile: profile))
+            })
 
         guard configurations.values.allSatisfy({ !$0.baseURL.isEmpty }) else {
-            statusMessage = "OpenGLM server URL is empty. Update it in Settings → AI Models."
+            statusMessage = "AI server URL is empty. Update it in Settings → AI Models."
             return false
         }
 
@@ -92,7 +114,8 @@ final class AgentRunStore: ObservableObject {
                 personaEmoji: profile.personaEmoji,
                 statusMessage: "Queued…",
                 logText: "",
-                lastCommand: "Native Swift agent · model=\(configuration.modelName) · device=\(deviceID)",
+                lastCommand:
+                    "Native Swift agent · model=\(configuration.modelName) · device=\(deviceID)",
                 lastExitCode: nil,
                 lastTask: trimmedTask,
                 isRunning: true
@@ -101,10 +124,12 @@ final class AgentRunStore: ObservableObject {
 
         selectedDeviceRunID = uniqueDeviceIDs.first
         didRequestCancel = false
+        cancelledDeviceIDs = []
         isRunning = true
-        statusMessage = uniqueDeviceIDs.count == 1
-            ? "Running natively on \(uniqueDeviceIDs[0])…"
-            : "Running across \(uniqueDeviceIDs.count) devices…"
+        statusMessage =
+            uniqueDeviceIDs.count == 1
+            ? "Running AI Automation on \(uniqueDeviceIDs[0])…"
+            : "Running AI Automation across \(uniqueDeviceIDs.count) devices…"
         syncSelectedRunProjection()
 
         runTask = Task.detached(priority: .userInitiated) { [weak self] in
@@ -118,11 +143,18 @@ final class AgentRunStore: ObservableObject {
                         guard let self else { return }
 
                         await MainActor.run {
-                            self.appendLog("Starting native Open-AutoGLM agent\n", for: deviceID)
+                            let providerName = type(of: configuration.modelProvider).displayName
+                            self.appendLog("Starting \(providerName) agent\n", for: deviceID)
                             self.appendLog("Device: \(deviceID)\n", for: deviceID)
-                            self.appendLog("Device persona: \(configuration.devicePersona.isEmpty ? "None" : configuration.devicePersona)\n", for: deviceID)
-                            self.appendLog("Preferred apps: \(configuration.preferredApps.isEmpty ? "None" : configuration.preferredApps)\n", for: deviceID)
-                            self.appendLog("Device notes: \(configuration.deviceNotes.isEmpty ? "None" : configuration.deviceNotes)\n", for: deviceID)
+                            self.appendLog(
+                                "Device persona: \(configuration.devicePersona.isEmpty ? "None" : configuration.devicePersona)\n",
+                                for: deviceID)
+                            self.appendLog(
+                                "Preferred apps: \(configuration.preferredApps.isEmpty ? "None" : configuration.preferredApps)\n",
+                                for: deviceID)
+                            self.appendLog(
+                                "Device notes: \(configuration.deviceNotes.isEmpty ? "None" : configuration.deviceNotes)\n",
+                                for: deviceID)
                         }
 
                         let agent = NativePhoneAgent(
@@ -138,15 +170,21 @@ final class AgentRunStore: ObservableObject {
                                     self.updateStatus(text, for: deviceID)
                                 }
                             },
+                            screenshotHandler: { data, step in
+                                await MainActor.run {
+                                    self.updateScreenshot(data, step: step, for: deviceID)
+                                }
+                            },
                             cancellationChecker: {
                                 await MainActor.run {
-                                    self.didRequestCancel
+                                    self.didRequestCancel || self.cancelledDeviceIDs.contains(deviceID)
                                 }
                             }
                         )
 
                         do {
-                            let finalMessage = try await agent.run(task: trimmedTask, deviceID: deviceID)
+                            let finalMessage = try await agent.run(
+                                task: trimmedTask, deviceID: deviceID)
                             await MainActor.run {
                                 self.finishRun(for: deviceID, success: true, message: finalMessage)
                             }
@@ -156,7 +194,9 @@ final class AgentRunStore: ObservableObject {
                             }
                         } catch {
                             await MainActor.run {
-                                self.finishRun(for: deviceID, success: false, message: error.localizedDescription)
+                                self.finishRun(
+                                    for: deviceID, success: false,
+                                    message: error.localizedDescription)
                             }
                         }
                     }
@@ -188,6 +228,13 @@ final class AgentRunStore: ObservableObject {
         runTask?.cancel()
     }
 
+    func cancelDevice(_ deviceID: String) {
+        guard deviceRuns.first(where: { $0.deviceID == deviceID })?.isRunning == true else { return }
+        cancelledDeviceIDs.insert(deviceID)
+        appendLog("\nCancel requested by user.\n", for: deviceID)
+        updateStatus("Cancelling…", for: deviceID)
+    }
+
     func clearLog() {
         guard !isRunning else { return }
         deviceRuns = []
@@ -196,12 +243,14 @@ final class AgentRunStore: ObservableObject {
         lastCommand = ""
         lastExitCode = nil
         lastTask = ""
-        statusMessage = "Ready to run Open-AutoGLM."
+        statusMessage = "Ready to run AI Automation."
     }
 
     func presentIssue(_ message: String) {
         statusMessage = message
-        if let selectedDeviceRunID, deviceRuns.contains(where: { $0.deviceID == selectedDeviceRunID }) {
+        if let selectedDeviceRunID,
+            deviceRuns.contains(where: { $0.deviceID == selectedDeviceRunID })
+        {
             appendLog("Warning: \(message)\n", for: selectedDeviceRunID)
         } else {
             logText += "Warning: \(message)\n"
@@ -209,11 +258,12 @@ final class AgentRunStore: ObservableObject {
     }
 
     private func finishRun(for deviceID: String, success: Bool, message: String) {
+        let cleanMessage = AIModelParsingUtils.stripFinishWrapper(message)
         updateRun(for: deviceID) { run in
             run.isRunning = false
             run.lastExitCode = success ? 0 : 1
-            run.statusMessage = message
-            run.logText += success ? "\nSuccess: \(message)\n" : "\nError: \(message)\n"
+            run.statusMessage = success ? "Task completed." : cleanMessage
+            run.logText += success ? "\nSuccess: \(cleanMessage)\n" : "\nError: \(cleanMessage)\n"
             if run.logText.count > 120_000 {
                 run.logText.removeFirst(run.logText.count - 100_000)
             }
@@ -243,6 +293,19 @@ final class AgentRunStore: ObservableObject {
         }
     }
 
+    private func updateScreenshot(_ data: Data, step: Int, for deviceID: String) {
+        updateRun(for: deviceID) { run in
+            run.screenshotsByStep[step] = data
+            // Keep only the last 20 step screenshots to limit memory
+            if run.screenshotsByStep.count > 20 {
+                let keysToRemove = run.screenshotsByStep.keys.sorted().prefix(run.screenshotsByStep.count - 20)
+                for key in keysToRemove {
+                    run.screenshotsByStep.removeValue(forKey: key)
+                }
+            }
+        }
+    }
+
     private func updateStatus(_ text: String, for deviceID: String) {
         updateRun(for: deviceID) { run in
             run.statusMessage = text
@@ -260,7 +323,9 @@ final class AgentRunStore: ObservableObject {
         isRunning = deviceRuns.contains(where: { $0.isRunning })
 
         let runningCount = deviceRuns.filter { $0.isRunning }.count
-        let failedCount = deviceRuns.filter { ($0.lastExitCode ?? 0) != 0 && $0.lastExitCode != nil }.count
+        let failedCount = deviceRuns.filter {
+            ($0.lastExitCode ?? 0) != 0 && $0.lastExitCode != nil
+        }.count
 
         if runningCount > 1 {
             statusMessage = "Running across \(runningCount) devices…"
@@ -268,23 +333,27 @@ final class AgentRunStore: ObservableObject {
             statusMessage = "\(activeRun.deviceID): \(activeRun.statusMessage)"
         } else if !deviceRuns.isEmpty {
             if failedCount > 0 {
-                statusMessage = failedCount == deviceRuns.count
+                statusMessage =
+                    failedCount == deviceRuns.count
                     ? "All device runs ended with issues."
                     : "Completed with issues on \(failedCount) device(s)."
             } else {
-                statusMessage = deviceRuns.count == 1
-                    ? (deviceRuns.first?.statusMessage ?? "Task completed successfully.")
+                statusMessage =
+                    deviceRuns.count == 1
+                    ? "Task completed."
                     : "Completed on \(deviceRuns.count) devices."
             }
         } else {
-            statusMessage = "Ready to run Open-AutoGLM."
+            statusMessage = "Ready to run AI Automation."
         }
 
         syncSelectedRunProjection()
     }
 
     private func syncSelectedRunProjection() {
-        if let selectedDeviceRunID, !deviceRuns.contains(where: { $0.deviceID == selectedDeviceRunID }) {
+        if let selectedDeviceRunID,
+            !deviceRuns.contains(where: { $0.deviceID == selectedDeviceRunID })
+        {
             self.selectedDeviceRunID = deviceRuns.first?.deviceID
             return
         }
@@ -310,6 +379,7 @@ final class AgentRunStore: ObservableObject {
 }
 
 private struct NativeAgentConfiguration: Sendable {
+    let modelProvider: any AIModelProvider
     let baseURL: String
     let apiKey: String
     let modelName: String
@@ -340,7 +410,8 @@ private struct NativeAgentConfiguration: Sendable {
 
     var effectiveDeviceNotes: String {
         let trimmed = deviceNotes.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? "No extra device notes or safety rules were provided for this device." : trimmed
+        return trimmed.isEmpty
+            ? "No extra device notes or safety rules were provided for this device." : trimmed
     }
 
     var resolvedLanguageEnhancerBaseURL: String {
@@ -360,23 +431,31 @@ private struct NativeAgentConfiguration: Sendable {
         !resolvedLanguageEnhancerBaseURL.isEmpty && !resolvedLanguageEnhancerModel.isEmpty
     }
 
-    var languageEnhancerRequestTargets: [(label: String, baseURL: String, apiKey: String, model: String)] {
+    var languageEnhancerRequestTargets:
+        [(label: String, baseURL: String, apiKey: String, model: String)]
+    {
         var targets: [(label: String, baseURL: String, apiKey: String, model: String)] = []
 
         func appendTarget(label: String, baseURL: String, apiKey: String, model: String) {
             let trimmedBaseURL = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
             let trimmedModel = model.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmedBaseURL.isEmpty, !trimmedModel.isEmpty else { return }
-            guard !targets.contains(where: { $0.baseURL == trimmedBaseURL && $0.model == trimmedModel && $0.apiKey == apiKey.trimmingCharacters(in: .whitespacesAndNewlines) }) else {
+            guard
+                !targets.contains(where: {
+                    $0.baseURL == trimmedBaseURL && $0.model == trimmedModel
+                        && $0.apiKey == apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+                })
+            else {
                 return
             }
 
-            targets.append((
-                label: label,
-                baseURL: trimmedBaseURL,
-                apiKey: apiKey.trimmingCharacters(in: .whitespacesAndNewlines),
-                model: trimmedModel
-            ))
+            targets.append(
+                (
+                    label: label,
+                    baseURL: trimmedBaseURL,
+                    apiKey: apiKey.trimmingCharacters(in: .whitespacesAndNewlines),
+                    model: trimmedModel
+                ))
         }
 
         appendTarget(
@@ -396,7 +475,11 @@ private struct NativeAgentConfiguration: Sendable {
     }
 
     @MainActor
-    init(settings: AISettingsStore, devicePersona: String = "", preferredApps: String = "", deviceNotes: String = "") {
+    init(
+        settings: AISettingsStore, devicePersona: String = "", preferredApps: String = "",
+        deviceNotes: String = ""
+    ) {
+        self.modelProvider = settings.resolvedModelProvider
         self.baseURL = settings.openGLMServer.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedKey = settings.openGLMKey.trimmingCharacters(in: .whitespacesAndNewlines)
         self.apiKey = trimmedKey.isEmpty ? "EMPTY" : trimmedKey
@@ -410,10 +493,13 @@ private struct NativeAgentConfiguration: Sendable {
         self.devicePersona = devicePersona.trimmingCharacters(in: .whitespacesAndNewlines)
         self.preferredApps = preferredApps.trimmingCharacters(in: .whitespacesAndNewlines)
         self.deviceNotes = deviceNotes.trimmingCharacters(in: .whitespacesAndNewlines)
-        self.languageEnhancerBaseURL = settings.languageEnhancerServer.trimmingCharacters(in: .whitespacesAndNewlines)
-        let enhancerKey = settings.languageEnhancerKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.languageEnhancerBaseURL = settings.languageEnhancerServer.trimmingCharacters(
+            in: .whitespacesAndNewlines)
+        let enhancerKey = settings.languageEnhancerKey.trimmingCharacters(
+            in: .whitespacesAndNewlines)
         self.languageEnhancerAPIKey = enhancerKey.isEmpty ? "EMPTY" : enhancerKey
-        self.languageEnhancerModel = settings.languageEnhancerModel.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.languageEnhancerModel = settings.languageEnhancerModel.trimmingCharacters(
+            in: .whitespacesAndNewlines)
     }
 
     @MainActor
@@ -432,6 +518,7 @@ private struct NativePhoneAgent: Sendable {
     let provider: any ADBProviding
     let logger: @Sendable (String) async -> Void
     let statusHandler: @Sendable (String) async -> Void
+    let screenshotHandler: @Sendable (Data, Int) async -> Void
     let cancellationChecker: @Sendable () async -> Bool
 
     func run(task: String, deviceID: String?) async throws -> String {
@@ -441,13 +528,32 @@ private struct NativePhoneAgent: Sendable {
             preparedTask = task
         }
 
+        // Detect the user's language via the Language Enhancer LLM if available,
+        // otherwise fall back to the NLP heuristic inside each provider's systemPrompt.
+        var detectedLanguage: String?
+        if configuration.hasLanguageEnhancer {
+            let enhancer = NativeLanguageEnhancerClient(configuration: configuration)
+            do {
+                let detected = try await enhancer.detectLanguage(task: preparedTask)
+                let trimmed = detected.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty {
+                    detectedLanguage = trimmed
+                    await logger("Language detected by enhancer: \(trimmed)\n")
+                }
+            } catch {
+                await logger("Language detection fallback to NLP: \(error.localizedDescription)\n")
+            }
+        }
+
         var context: [NativeAgentMessage] = [
             .system(
-                text: NativeAgentPromptBuilder.systemPrompt(
+                text: configuration.modelProvider.systemPrompt(
                     userTask: preparedTask,
                     devicePersona: configuration.effectiveDevicePersona,
                     preferredApps: configuration.effectivePreferredApps,
-                    deviceNotes: configuration.effectiveDeviceNotes
+                    deviceNotes: configuration.effectiveDeviceNotes,
+                    hasLanguageEnhancer: configuration.hasLanguageEnhancer,
+                    detectedLanguage: detectedLanguage
                 )
             )
         ]
@@ -465,6 +571,10 @@ private struct NativePhoneAgent: Sendable {
             }
 
             let screenshot = try provider.getScreenshot(deviceID: deviceID)
+            if !screenshot.imageData.isEmpty {
+                await screenshotHandler(screenshot.imageData, step)
+            }
+            await logger("Info: Screenshot \(screenshot.compressionSummary)\n")
             let currentApp = (try? provider.getCurrentApp(deviceID: deviceID)) ?? "Unknown"
             let runtime = ADBDeviceRuntimeStatus(
                 batteryLevel: nil,
@@ -472,7 +582,7 @@ private struct NativePhoneAgent: Sendable {
                 dataStatus: nil,
                 currentApp: currentApp
             )
-            let screenInfo = NativeAgentPromptBuilder.screenInfo(currentApp: currentApp)
+            let screenInfo = AIModelParsingUtils.screenInfo(currentApp: currentApp)
 
             let effectiveTask: String
             if step == 1 {
@@ -486,24 +596,14 @@ private struct NativePhoneAgent: Sendable {
                 effectiveTask = preparedTask
             }
 
-            let textContent: String
-            if step == 1 {
-                textContent = """
-                User request (keep the same language as this request; never switch to Chinese unless the request itself is Chinese):
-                \(effectiveTask)
-
-                ** Device Preferences **
-
-                Preferred apps: \(configuration.effectivePreferredApps)
-                Device notes: \(configuration.effectiveDeviceNotes)
-
-                ** Screen Info **
-
-                \(screenInfo)
-                """
-            } else {
-                textContent = "** Screen Info **\n\n\(screenInfo)"
-            }
+            let textContent = configuration.modelProvider.userMessage(
+                step: step,
+                task: effectiveTask,
+                screenInfo: screenInfo,
+                devicePersona: configuration.effectiveDevicePersona,
+                preferredApps: configuration.effectivePreferredApps,
+                deviceNotes: configuration.effectiveDeviceNotes
+            )
 
             context.append(
                 .user(
@@ -518,21 +618,99 @@ private struct NativePhoneAgent: Sendable {
             await logger("Current app: \(runtime.currentApp ?? "Unknown")\n")
             await logger("Thinking:\n")
 
-            let response = try await modelClient.request(messages: context) { chunk in
-                await logger(chunk)
+            // // Debug: print input context sent to model
+            // do {
+            //     var lines: [String] = [
+            //         "[Input Context · Step \(step) · \(context.count) messages]"
+            //     ]
+            //     for (i, msg) in context.enumerated() {
+            //         let text = msg.text
+            //         let preview = text.count > 500 ? String(text.prefix(500)) + "…" : text
+            //         var line = "  [\(i)] \(msg.role): \(preview)"
+            //         if let img = msg.imageBase64 {
+            //             line += " [image: \(img.count) chars]"
+            //         }
+            //         lines.append(line)
+            //     }
+            //     print(lines.joined(separator: "\n"))
+            // }
+
+            let streamsReadable = configuration.modelProvider.streamsReadableThinking
+            let maxRetries = 2
+            var response: NativeModelResponse!
+            var action: NativeAgentAction!
+
+            for attempt in 0...maxRetries {
+                try Task.checkCancellation()
+
+                if attempt > 0 {
+                    await logger("Reprompting (attempt \(attempt + 1)/\(maxRetries + 1))...\n")
+                    await statusHandler("Reprompting... attempt \(attempt + 1)")
+                }
+
+                response = try await modelClient.request(messages: context) { chunk in
+                    if streamsReadable {
+                        await logger(chunk)
+                    }
+                }
+
+                // For providers that don't stream readable text (JSON-mode like OpenAI),
+                // log the fully-parsed thinking text in one clean block.
+                if !streamsReadable && !response.thinking.isEmpty {
+                    await logger(response.thinking)
+                }
+                await logger("\n")
+
+                let modelAction = configuration.modelProvider.parseAction(from: response.action)
+                action = NativeActionParser.fromModelAction(modelAction)
+                await logger("Action: \(action.logDescription)\n")
+
+                do {
+                    let debugLog = """
+                        [Step \(step) · Attempt \(attempt + 1)]
+                        raw_response: \(response.rawContent)
+                        thinking: \(response.thinking)
+                        action: \(response.action)
+                        resolved: \(action.logDescription)
+                        """
+                    print(debugLog)
+                }
+
+                // If action parsed successfully, break out of retry loop
+                if case .unknown = action! {} else {
+                    break
+                }
+
+                // On unknown action: append the bad response + correction, then retry
+                if attempt < maxRetries {
+                    if let lastIndex = context.indices.last {
+                        context[lastIndex] = context[lastIndex].removingImage()
+                    }
+                    context.append(.assistant(text: response.rawContent))
+                    context.append(.user(
+                        text: """
+                            Your last response could not be parsed into a valid action. \
+                            Please respond again with a valid JSON object containing "thinking" and "action" fields. \
+                            The "action" field must have a "type" key with one of: tap, swipe, type, long press, double tap, listapp, launch, back, home, wait, take_over, finish. \
+                            Example: {"thinking": "...", "action": {"type": "tap", "element": [500, 300]}}
+                            """,
+                        imageBase64: nil
+                    ))
+                    await logger("⚠ Could not parse action, reprompting model...\n")
+                } else {
+                    await logger("⚠ Failed to parse action after \(maxRetries + 1) attempts, proceeding with unknown action.\n")
+                }
             }
-
-            await logger("\n")
-
-            let action = NativeActionParser.parse(response.action)
-            await logger("Action: \(action.logDescription)\n")
 
             if let lastIndex = context.indices.last {
                 context[lastIndex] = context[lastIndex].removingImage()
             }
-            context.append(.assistant(text: "<think>\(response.thinking)</think><answer>\(response.action)</answer>"))
+            let assistantText = configuration.modelProvider.formatAssistantContext(
+                thinking: response.thinking, action: response.action)
+            context.append(.assistant(text: assistantText))
 
             await statusHandler("Executing \(action.shortLabel)...")
+            let conversationSummary = Self.buildConversationSummary(from: context)
             let result = try await execute(
                 action: action,
                 screenshot: screenshot,
@@ -540,12 +718,14 @@ private struct NativePhoneAgent: Sendable {
                 task: task,
                 runtime: runtime,
                 screenInfo: screenInfo,
-                modelThinking: response.thinking
+                modelThinking: response.thinking,
+                conversationContext: conversationSummary
             )
 
             if let message = result.message, !message.isEmpty {
                 await logger("Info: \(message)\n")
-                context.append(.user(text: "** Last action result **\n\n\(message)", imageBase64: nil))
+                context.append(
+                    .user(text: "** Last action result **\n\n\(message)", imageBase64: nil))
             }
 
             if result.finished {
@@ -563,10 +743,11 @@ private struct NativePhoneAgent: Sendable {
         task: String,
         runtime: ADBDeviceRuntimeStatus,
         screenInfo: String,
-        modelThinking: String
+        modelThinking: String,
+        conversationContext: String = ""
     ) async throws -> NativeActionResult {
         switch action {
-        case let .finish(message):
+        case .finish(let message):
             let finalMessage = try await resolvedFinishMessage(
                 from: message,
                 task: task,
@@ -576,32 +757,70 @@ private struct NativePhoneAgent: Sendable {
             )
             return NativeActionResult(finished: true, message: finalMessage)
 
-        case let .listApp(query):
+        case .listApp(let query):
             return NativeActionResult(
                 finished: false,
                 message: installedAppsSummary(query: query, deviceID: deviceID)
             )
 
-        case let .launch(app):
-            let launchResult = try provider.launchApp(app, deviceID: deviceID, delay: nil)
-            return NativeActionResult(finished: !launchResult.succeeded, message: launchResult.message)
+        case .launch(let app):
+            guard !app.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                return NativeActionResult(
+                    finished: false,
+                    message: "No app name or package was provided to Launch. Use Launch with an app name and the system will find the matching package.")
+            }
 
-        case let .tap(point, message):
+            let trimmedApp = app.trimmingCharacters(in: .whitespacesAndNewlines)
+
+            // If it looks like a resolved package name (contains dots), launch directly.
+            if trimmedApp.contains(".") {
+                let launchResult = try provider.launchApp(trimmedApp, deviceID: deviceID, delay: nil)
+                return NativeActionResult(finished: false, message: launchResult.message)
+            }
+
+            // Otherwise, auto-resolve: list installed apps and send candidates back to the AI.
+            await logger("Auto-resolving app name: \(trimmedApp)\n")
+            let candidates = installedAppCandidates(query: trimmedApp, deviceID: deviceID)
+
+            if candidates.count == 1 {
+                // Exact single match — launch directly without another AI round-trip.
+                let pkg = candidates[0].package
+                let name = candidates[0].display
+                await logger("Single match found: \(name) — launching directly.\n")
+                let launchResult = try provider.launchApp(pkg, deviceID: deviceID, delay: nil)
+                return NativeActionResult(finished: false, message: launchResult.message)
+            }
+
+            if candidates.isEmpty {
+                return NativeActionResult(
+                    finished: false,
+                    message: "No installed app matched \"\(trimmedApp)\". You can try a different name, or use Launch(app=\"\(trimmedApp)\") with the exact package name if you know it.")
+            }
+
+            // Multiple matches — send back to the AI to pick the right one.
+            let listing = candidates.prefix(15).map { "- \($0.display) (\($0.package))" }.joined(separator: "\n")
+            return NativeActionResult(
+                finished: false,
+                message: "Multiple apps match \"\(trimmedApp)\". Pick the correct package and call Launch(app=\"package.name\") with the exact package:\n\(listing)"
+            )
+
+        case .tap(let point, let message):
             let resolved = resolve(point: point, screenshot: screenshot)
             try provider.tap(x: resolved.x, y: resolved.y, deviceID: deviceID, delay: nil)
             return NativeActionResult(finished: false, message: message)
 
-        case let .doubleTap(point):
+        case .doubleTap(let point):
             let resolved = resolve(point: point, screenshot: screenshot)
             try provider.doubleTap(x: resolved.x, y: resolved.y, deviceID: deviceID, delay: nil)
             return NativeActionResult(finished: false, message: nil)
 
-        case let .longPress(point):
+        case .longPress(let point):
             let resolved = resolve(point: point, screenshot: screenshot)
-            try provider.longPress(x: resolved.x, y: resolved.y, durationMS: 3000, deviceID: deviceID, delay: nil)
+            try provider.longPress(
+                x: resolved.x, y: resolved.y, durationMS: 3000, deviceID: deviceID, delay: nil)
             return NativeActionResult(finished: false, message: nil)
 
-        case let .swipe(start, end):
+        case .swipe(let start, let end):
             let resolvedStart = resolve(point: start, screenshot: screenshot)
             let resolvedEnd = resolve(point: end, screenshot: screenshot)
             try provider.swipe(
@@ -615,26 +834,34 @@ private struct NativePhoneAgent: Sendable {
             )
             return NativeActionResult(finished: false, message: nil)
 
-        case let .type(text, enhance):
+        case .type(let text, let enhance):
             let finalText = try await resolvedTextInput(
                 from: text,
                 shouldEnhance: enhance,
                 task: task,
                 runtime: runtime,
                 screenInfo: screenInfo,
-                modelThinking: modelThinking
+                modelThinking: modelThinking,
+                conversationContext: conversationContext
             )
-            let trimmedText = finalText.trimmingCharacters(in: .whitespacesAndNewlines)
+            let sanitizedText = stripActionWrapper(from: finalText)
+            let trimmedText = sanitizedText.trimmingCharacters(in: .whitespacesAndNewlines)
+
+            if sanitizedText != finalText.trimmingCharacters(in: .whitespacesAndNewlines) {
+                await logger("Stripped leaked action wrapper from text input.\n")
+            }
 
             guard !trimmedText.isEmpty else {
-                return NativeActionResult(finished: false, message: "Skipped typing because no text input was generated.")
+                return NativeActionResult(
+                    finished: false, message: "Skipped typing because no text input was generated.")
             }
 
             try provider.clearText(deviceID: deviceID)
             try await pause(seconds: ADBTiming.textClearDelay)
             try provider.typeText(trimmedText, deviceID: deviceID)
             try await pause(seconds: ADBTiming.textInputDelay)
-            return NativeActionResult(finished: false, message: "Typed text input: \(textPreview(trimmedText))")
+            return NativeActionResult(
+                finished: false, message: "Typed text input: \(textPreview(trimmedText))")
 
         case .back:
             try provider.back(deviceID: deviceID, delay: nil)
@@ -644,14 +871,18 @@ private struct NativePhoneAgent: Sendable {
             try provider.home(deviceID: deviceID, delay: nil)
             return NativeActionResult(finished: false, message: nil)
 
-        case let .wait(seconds):
-            try await pause(seconds: max(0.2, min(seconds, 10)))
-            return NativeActionResult(finished: false, message: "Waited for \(String(format: "%.1f", seconds))s")
+        case .wait(let seconds):
+            let clampedWait = max(0.5, min(seconds, 120))
+            await logger("Waiting for \(String(format: "%.1f", clampedWait))s...\n")
+            try await pause(seconds: clampedWait)
+            return NativeActionResult(
+                finished: false, message: "Waited for \(String(format: "%.1f", clampedWait))s")
 
-        case let .takeOver(message):
-            return NativeActionResult(finished: true, message: message ?? "Manual takeover requested.")
+        case .takeOver(let message):
+            return NativeActionResult(
+                finished: true, message: message ?? "Manual takeover requested.")
 
-        case let .unknown(name, raw):
+        case .unknown(let name, let raw):
             let fallbackSummary = try await resolvedUnsupportedActionMessage(
                 name: name,
                 raw: raw,
@@ -660,11 +891,13 @@ private struct NativePhoneAgent: Sendable {
                 screenInfo: screenInfo,
                 modelThinking: modelThinking
             )
-            return NativeActionResult(finished: true, message: fallbackSummary)
+            print("Unsupported action '\(name)' with raw content: \(raw)")
+            return NativeActionResult(finished: false, message: fallbackSummary)
         }
     }
 
-    private func resolve(point: NativeRelativePoint, screenshot: ADBScreenshot) -> (x: Int, y: Int) {
+    private func resolve(point: NativeRelativePoint, screenshot: ADBScreenshot) -> (x: Int, y: Int)
+    {
         let x = Int((Double(point.x) / 1000.0) * Double(screenshot.width))
         let y = Int((Double(point.y) / 1000.0) * Double(screenshot.height))
         return (max(0, x), max(0, y))
@@ -691,10 +924,12 @@ private struct NativePhoneAgent: Sendable {
         }
 
         if !normalizedQuery.isEmpty && matches.isEmpty {
-            return "No installed app matched \(trimmedQuery.debugDescription) in the ADB package list (\(installedPackages.count) packages scanned). If still needed, use Launch(app=\"\(trimmedQuery)\") to open Google Play."
+            return
+                "No installed app matched \(trimmedQuery.debugDescription) in the ADB package list (\(installedPackages.count) packages scanned). If still needed, use Launch(app=\"\(trimmedQuery)\") to open Google Play."
         }
 
-        let preview = matches
+        let preview =
+            matches
             .map { package in
                 if let appName = ADBAppCatalog.appName(for: package) {
                     return "\(appName) (\(package))"
@@ -706,19 +941,42 @@ private struct NativePhoneAgent: Sendable {
 
         let header: String
         if normalizedQuery.isEmpty {
-            header = "Installed apps on the device (showing \(min(15, matches.count)) of \(matches.count)):"
+            header =
+                "Installed apps on the device (showing \(min(15, matches.count)) of \(matches.count)):"
         } else {
-            header = "Installed apps matching \(trimmedQuery.debugDescription) (showing \(min(15, matches.count)) of \(matches.count)):"
+            header =
+                "Installed apps matching \(trimmedQuery.debugDescription) (showing \(min(15, matches.count)) of \(matches.count)):"
         }
 
         let lines = preview.map { "- \($0)" }.joined(separator: "\n")
-        return "\(header)\n\(lines)\nUse Launch(app=\"exact app name or package\") for the one you want."
+        return
+            "\(header)\n\(lines)\nUse Launch(app=\"exact app name or package\") for the one you want."
     }
 
     private func normalizedLookupKey(_ text: String) -> String {
         text
             .lowercased()
             .replacingOccurrences(of: "[^a-z0-9]+", with: "", options: .regularExpression)
+    }
+
+    /// Returns structured app candidates matching a query, used by the auto-resolve launch flow.
+    private func installedAppCandidates(query: String, deviceID: String?) -> [(display: String, package: String)] {
+        let installedPackages = provider.listInstalledPackages(deviceID: deviceID)
+        guard !installedPackages.isEmpty else { return [] }
+
+        let normalizedQuery = normalizedLookupKey(query)
+        guard !normalizedQuery.isEmpty else { return [] }
+
+        return installedPackages.compactMap { package in
+            let packageKey = normalizedLookupKey(package)
+            let appName = ADBAppCatalog.appName(for: package)
+            let appNameKey = normalizedLookupKey(appName ?? "")
+            guard packageKey.contains(normalizedQuery) || appNameKey.contains(normalizedQuery) else {
+                return nil
+            }
+            let display = appName ?? package
+            return (display: display, package: package)
+        }
     }
 
     private func resolvedUserTask(
@@ -732,7 +990,6 @@ private struct NativePhoneAgent: Sendable {
         let enhancer = NativeLanguageEnhancerClient(configuration: configuration)
 
         do {
-            await logger("Invoking language enhancer to refine the user task with persona context.\n")
             let rewrittenTask = try await enhancer.enhanceUserTask(
                 task: trimmedTask,
                 currentApp: runtime.currentApp,
@@ -743,14 +1000,15 @@ private struct NativePhoneAgent: Sendable {
             )
             let finalTask = rewrittenTask.trimmingCharacters(in: .whitespacesAndNewlines)
 
-            if !finalTask.isEmpty {
-                if finalTask != trimmedTask {
-                    await logger("Language enhancer rewrote the task using persona context.\n")
-                } else {
-                    await logger("Language enhancer kept the original task.\n")
-                }
-                return finalTask
-            }
+            // if !finalTask.isEmpty {
+            //     if finalTask != trimmedTask {
+            //         await logger("Language enhancer rewrote the task using persona context.\n")
+            //     } else {
+            //         await logger("Language enhancer kept the original task.\n")
+            //     }
+            //     return finalTask
+            // }
+            return finalTask
         } catch {
             await logger("Language enhancer task fallback: \(error.localizedDescription)\n")
         }
@@ -765,7 +1023,8 @@ private struct NativePhoneAgent: Sendable {
         screenInfo: String,
         modelThinking: String
     ) async throws -> String {
-        let baseMessage = draftMessage?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        let baseMessage =
+            draftMessage?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
             ? draftMessage!.trimmingCharacters(in: .whitespacesAndNewlines)
             : "Task completed successfully."
         guard configuration.hasLanguageEnhancer else { return baseMessage }
@@ -822,7 +1081,8 @@ private struct NativePhoneAgent: Sendable {
             let trimmed = summary.trimmingCharacters(in: .whitespacesAndNewlines)
             return trimmed.isEmpty ? baseMessage : trimmed
         } catch {
-            await logger("Language enhancer unsupported-action fallback: \(error.localizedDescription)\n")
+            await logger(
+                "Language enhancer unsupported-action fallback: \(error.localizedDescription)\n")
             return baseMessage
         }
     }
@@ -833,18 +1093,21 @@ private struct NativePhoneAgent: Sendable {
         task: String,
         runtime: ADBDeviceRuntimeStatus,
         screenInfo: String,
-        modelThinking: String
+        modelThinking: String,
+        conversationContext: String = ""
     ) async throws -> String {
         let trimmed = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard configuration.hasLanguageEnhancer else { return trimmed }
+        guard configuration.hasLanguageEnhancer else {
+            await logger("Language enhancer not configured — typing raw text as-is.\n")
+            return trimmed
+        }
 
         let enhancer = NativeLanguageEnhancerClient(configuration: configuration)
 
         do {
-            let reason = shouldEnhance
-                ? "model requested refinement"
-                : "verifying text stays in the user's language"
-            await logger("Invoking language enhancer model: \(configuration.resolvedLanguageEnhancerModel) @ \(configuration.resolvedLanguageEnhancerBaseURL) (\(reason))\n")
+            await logger(
+                "Invoking language enhancer model: \(configuration.resolvedLanguageEnhancerModel) @ \(configuration.resolvedLanguageEnhancerBaseURL) (always refining before typing)\n"
+            )
             let generatedText = try await enhancer.generateTextInput(
                 task: task,
                 requestedText: trimmed,
@@ -853,7 +1116,8 @@ private struct NativePhoneAgent: Sendable {
                 devicePersona: configuration.effectiveDevicePersona,
                 preferredApps: configuration.effectivePreferredApps,
                 deviceNotes: configuration.effectiveDeviceNotes,
-                modelThinking: modelThinking
+                modelThinking: modelThinking,
+                conversationContext: conversationContext
             )
             let finalText = generatedText.trimmingCharacters(in: .whitespacesAndNewlines)
 
@@ -880,10 +1144,60 @@ private struct NativePhoneAgent: Sendable {
         return "\"\(flattened)\""
     }
 
+    /// Detects and strips raw action wrappers that leak from the model or language enhancer.
+    /// e.g. `do(action="Type", text="hello")` → `hello`
+    private func stripActionWrapper(from text: String) -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // Strip do(action="Type", text="...") wrapper
+        if trimmed.hasPrefix("do(") || trimmed.hasPrefix("Do(") {
+            if let extracted = AIModelParsingUtils.quotedValue(named: "text", in: trimmed),
+               !extracted.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return extracted
+            }
+        }
+
+        // Strip finish(message="...") wrapper
+        if trimmed.hasPrefix("finish(") || trimmed.hasPrefix("Finish(") {
+            if let extracted = AIModelParsingUtils.quotedValue(named: "message", in: trimmed),
+               !extracted.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return extracted
+            }
+        }
+
+        return trimmed
+    }
+
     private func pause(seconds: TimeInterval) async throws {
         let clampedSeconds = max(0, seconds)
         guard clampedSeconds > 0 else { return }
         try await Task.sleep(nanoseconds: UInt64(clampedSeconds * 1_000_000_000))
+    }
+
+    /// Builds a compact summary of the conversation history for the language enhancer.
+    /// Skips system messages and images, keeping only text from user/assistant turns.
+    private static func buildConversationSummary(from context: [NativeAgentMessage], maxChars: Int = 2000) -> String {
+        // Skip the system message (index 0) and collect user/assistant text turns
+        let turns = context.dropFirst().compactMap { msg -> String? in
+            let text = msg.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else { return nil }
+            let prefix = msg.role == "assistant" ? "Agent" : "Step"
+            let preview = text.count > 300 ? String(text.prefix(300)) + "…" : text
+            return "[\(prefix)] \(preview)"
+        }
+
+        guard !turns.isEmpty else { return "" }
+
+        // Take most recent turns, trimmed to fit within maxChars
+        var result: [String] = []
+        var totalLength = 0
+        for turn in turns.reversed() {
+            if totalLength + turn.count > maxChars { break }
+            result.insert(turn, at: 0)
+            totalLength += turn.count
+        }
+
+        return result.joined(separator: "\n")
     }
 }
 
@@ -901,10 +1215,12 @@ private struct NativeOpenAIModelClient: Sendable {
     ) async throws -> NativeModelResponse {
         let endpoints = candidateURLs(from: configuration.baseURL, path: "chat/completions")
         guard !endpoints.isEmpty else {
-            throw NativeAgentError.invalidConfiguration("Please enter a valid OpenGLM server URL in Settings → AI Models.")
+            throw NativeAgentError.invalidConfiguration(
+                "Please enter a valid OpenGLM server URL in Settings → AI Models.")
         }
 
-        var lastError: Error = NativeAgentError.invalidConfiguration("No usable OpenAI-compatible endpoint was found.")
+        var lastError: Error = NativeAgentError.invalidConfiguration(
+            "No usable OpenAI-compatible endpoint was found.")
 
         for endpoint in endpoints {
             do {
@@ -920,16 +1236,20 @@ private struct NativeOpenAIModelClient: Sendable {
                 }
 
                 if httpResponse.statusCode == 401 || httpResponse.statusCode == 403 {
-                    throw NativeAgentError.server("Authentication failed. Check the API key in Settings → AI Models.")
+                    throw NativeAgentError.server(
+                        "Authentication failed. Check the API key in Settings → AI Models.")
                 }
 
                 guard (200...299).contains(httpResponse.statusCode) else {
                     let errorData = try await collect(bytes: bytes)
-                    let errorMessage = Self.extractErrorMessage(from: errorData) ?? "Server returned HTTP \(httpResponse.statusCode)."
+                    let errorMessage =
+                        Self.extractErrorMessage(from: errorData)
+                        ?? "Server returned HTTP \(httpResponse.statusCode)."
                     throw NativeAgentError.server(errorMessage)
                 }
 
-                return try await parseStreamingResponse(from: bytes, onThinkingChunk: onThinkingChunk)
+                return try await parseStreamingResponse(
+                    from: bytes, onThinkingChunk: onThinkingChunk)
             } catch {
                 lastError = error
             }
@@ -939,15 +1259,14 @@ private struct NativeOpenAIModelClient: Sendable {
     }
 
     private func requestBody(for messages: [NativeAgentMessage]) throws -> Data {
-        let payload: [String: Any] = [
-            "model": configuration.modelName,
-            "messages": messages.map(\.jsonValue),
-            "max_tokens": configuration.maxTokens,
-            "temperature": configuration.temperature,
-            "top_p": configuration.topP,
-            "frequency_penalty": configuration.frequencyPenalty,
-            "stream": true
-        ]
+        var payload = configuration.modelProvider.requestParameters(
+            modelName: configuration.modelName,
+            maxTokens: configuration.maxTokens,
+            temperature: configuration.temperature,
+            topP: configuration.topP,
+            frequencyPenalty: configuration.frequencyPenalty
+        )
+        payload["messages"] = messages.map(\.jsonValue)
 
         return try JSONSerialization.data(withJSONObject: payload, options: [])
     }
@@ -970,9 +1289,10 @@ private struct NativeOpenAIModelClient: Sendable {
             if payload == "[DONE]" { break }
 
             guard let data = payload.data(using: .utf8),
-                  let chunk = try? decoder.decode(NativeStreamingChunk.self, from: data),
-                  let content = chunk.choices.first?.delta.content,
-                  !content.isEmpty else {
+                let chunk = try? decoder.decode(NativeStreamingChunk.self, from: data),
+                let content = chunk.choices.first?.delta.content,
+                !content.isEmpty
+            else {
                 continue
             }
 
@@ -984,7 +1304,7 @@ private struct NativeOpenAIModelClient: Sendable {
 
             buffer += content
 
-            if let markerRange = Self.firstActionMarkerRange(in: buffer) {
+            if let markerRange = configuration.modelProvider.firstActionMarkerRange(in: buffer) {
                 let thinkingPart = String(buffer[..<markerRange.lowerBound])
                 if !thinkingPart.isEmpty {
                     await onThinkingChunk(thinkingPart)
@@ -994,7 +1314,7 @@ private struct NativeOpenAIModelClient: Sendable {
                 continue
             }
 
-            if Self.endsWithPotentialActionPrefix(buffer) {
+            if configuration.modelProvider.endsWithPartialActionMarker(buffer) {
                 continue
             }
 
@@ -1006,8 +1326,9 @@ private struct NativeOpenAIModelClient: Sendable {
             await onThinkingChunk(buffer)
         }
 
-        let parsed = NativeResponseParser.parse(content: rawContent)
-        return NativeModelResponse(thinking: parsed.thinking, action: parsed.action, rawContent: rawContent)
+        let parsed = configuration.modelProvider.parseResponse(content: rawContent)
+        return NativeModelResponse(
+            thinking: parsed.thinking, action: parsed.action, rawContent: rawContent)
     }
 
     private func collect(bytes: URLSession.AsyncBytes) async throws -> Data {
@@ -1048,7 +1369,8 @@ private struct NativeOpenAIModelClient: Sendable {
         } else if normalizedPath == "v1" || normalizedPath.hasSuffix("/v1") {
             candidates.append(baseURL.appendingPathComponent(cleanPath))
         } else {
-            candidates.append(baseURL.appendingPathComponent("v1").appendingPathComponent(cleanPath))
+            candidates.append(
+                baseURL.appendingPathComponent("v1").appendingPathComponent(cleanPath))
             candidates.append(baseURL.appendingPathComponent(cleanPath))
         }
 
@@ -1062,18 +1384,22 @@ private struct NativeOpenAIModelClient: Sendable {
         }
 
         let isLocalHost = value.hasPrefix("localhost") || value.hasPrefix("127.")
-        let looksLikeIPAddress = value.range(of: #"^\d{1,3}(\.\d{1,3}){3}(:\d+)?/?$"#, options: .regularExpression) != nil
+        let looksLikeIPAddress =
+            value.range(of: #"^\d{1,3}(\.\d{1,3}){3}(:\d+)?/?$"#, options: .regularExpression)
+            != nil
 
         return (isLocalHost || looksLikeIPAddress ? "http://" : "https://") + value
     }
 
     private static func extractErrorMessage(from data: Data) -> String? {
         guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            return String(data: data, encoding: .utf8)?.trimmingCharacters(
+                in: .whitespacesAndNewlines)
         }
 
         if let errorObject = object["error"] as? [String: Any],
-           let message = errorObject["message"] as? String {
+            let message = errorObject["message"] as? String
+        {
             return message
         }
 
@@ -1082,26 +1408,6 @@ private struct NativeOpenAIModelClient: Sendable {
         }
 
         return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    private static func firstActionMarkerRange(in text: String) -> Range<String.Index>? {
-        let markers = ["finish(message=", "do(action="]
-        for marker in markers {
-            if let range = text.range(of: marker) {
-                return range
-            }
-        }
-        return nil
-    }
-
-    private static func endsWithPotentialActionPrefix(_ text: String) -> Bool {
-        let markers = ["finish(message=", "do(action="]
-        for marker in markers {
-            for length in 1..<marker.count where text.hasSuffix(String(marker.prefix(length))) {
-                return true
-            }
-        }
-        return false
     }
 }
 
@@ -1119,7 +1425,7 @@ private struct NativeLanguageEnhancerClient: Sendable {
         let personaText = normalizedPersonaText(from: devicePersona)
         let preferredAppsText = normalizedPreferredAppsText(from: preferredApps)
         let notesText = normalizedDeviceNotesText(from: deviceNotes)
-
+  
         let systemPrompt = """
         You rewrite a user's phone-assistant request into a clearer, more explicit task instruction for another Android automation model.
 
@@ -1159,6 +1465,26 @@ private struct NativeLanguageEnhancerClient: Sendable {
         )
     }
 
+    func detectLanguage(task: String) async throws -> String {
+        let systemPrompt = """
+            You are a language detection tool. Given a user's text, identify the language it is written in.
+            Return ONLY the language name in English (e.g. "Indonesian", "English", "Chinese", "Japanese", "Korean", "Spanish", "French", etc.).
+            No explanations, no labels, no punctuation — just the single language name.
+            If the text mixes languages, return the dominant/primary language.
+            """
+
+        let userPrompt = """
+            Detect the language of this text:
+            \(task)
+            """
+
+        return try await requestPlainText(
+            systemPrompt: systemPrompt,
+            userPrompt: userPrompt,
+            maxTokens: 10
+        )
+    }
+
     func refineDirectAnswer(
         task: String,
         draftAnswer: String,
@@ -1173,45 +1499,47 @@ private struct NativeLanguageEnhancerClient: Sendable {
         let personaText = normalizedPersonaText(from: devicePersona)
         let preferredAppsText = normalizedPreferredAppsText(from: preferredApps)
         let notesText = normalizedDeviceNotesText(from: deviceNotes)
-        let requestedFormat = format.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "md" : format.trimmingCharacters(in: .whitespacesAndNewlines)
+        let requestedFormat =
+            format.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? "md" : format.trimmingCharacters(in: .whitespacesAndNewlines)
         let systemPrompt = """
-        You are the Language Enhancer for an Android phone agent.
-        Your job is to polish a direct answer that will be shown to the user.
+            You are the Language Enhancer for an Android phone agent.
+            Your job is to polish a direct answer that will be shown to the user.
 
-        Hard rules:
-        - Preserve the original intent exactly.
-        - Keep the same language as the user's request.
-        - Never switch to Chinese unless the user's request is explicitly in Chinese.
-        - Use the device persona as required context to deepen the response quality and tone check, without changing the facts.
-        - Respect the requested output format.
-        - If format is `md`, return concise, readable Markdown.
-        - If the draft answer is already good, keep it unchanged.
-        - Return ONLY the final answer text, with no labels or explanations about your process.
-        """
+            Hard rules:
+            - Preserve the original intent exactly.
+            - Keep the same language as the user's request.
+            - Never switch to Chinese unless the user's request is explicitly in Chinese.
+            - Use the device persona as required context to deepen the response quality and tone check, without changing the facts.
+            - Respect the requested output format.
+            - If format is `md`, return concise, readable Markdown.
+            - If the draft answer is already good, keep it unchanged.
+            - Return ONLY the final answer text, with no labels or explanations about your process.
+            """
 
         let userPrompt = """
-        USER PROMPT:
-        \(task)
+            USER PROMPT:
+            \(task)
 
-        REQUESTED FORMAT:
-        \(requestedFormat)
+            REQUESTED FORMAT:
+            \(requestedFormat)
 
-        DRAFT ANSWER:
-        \(draftAnswer.isEmpty ? "[No draft answer was provided. Generate the final answer from context.]" : draftAnswer)
+            DRAFT ANSWER:
+            \(draftAnswer.isEmpty ? "[No draft answer was provided. Generate the final answer from context.]" : draftAnswer)
 
-        CONTEXT:
-        Current app: \(currentApp ?? "Unknown")
-        Device persona: \(personaText)
-        Preferred apps: \(preferredAppsText)
-        Device notes: \(notesText)
-        AutoGLM reasoning:
-        \(modelThinking)
-        Screen context:
-        \(screenInfo)
+            CONTEXT:
+            Current app: \(currentApp ?? "Unknown")
+            Device persona: \(personaText)
+            Preferred apps: \(preferredAppsText)
+            Device notes: \(notesText)
+            AutoGLM reasoning:
+            \(modelThinking)
+            Screen context:
+            \(screenInfo)
 
-        Rewrite or keep the answer so it is clear, natural, and in the correct language.
-        Return ONLY the final answer.
-        """
+            Rewrite or keep the answer so it is clear, natural, and in the correct language.
+            Return ONLY the final answer.
+            """
 
         return try await requestPlainText(
             systemPrompt: systemPrompt,
@@ -1229,68 +1557,86 @@ private struct NativeLanguageEnhancerClient: Sendable {
         devicePersona: String,
         preferredApps: String = "",
         deviceNotes: String = "",
-        modelThinking: String
+        modelThinking: String,
+        conversationContext: String = ""
     ) async throws -> String {
         let personaText = normalizedPersonaText(from: devicePersona)
         let preferredAppsText = normalizedPreferredAppsText(from: preferredApps)
         let notesText = normalizedDeviceNotesText(from: deviceNotes)
-        let draftText = requestedText.isEmpty
+        let draftText =
+            requestedText.isEmpty
             ? "[AutoGLM did not provide explicit text. Generate the final text from the user prompt and visual context.]"
             : requestedText
+        // Sanitize modelThinking: strip raw action lines (do(...), finish(...)) that confuse the LLM
+        // into regurgitating the action wrapper as the typing text.
+        let sanitizedThinking = modelThinking
+            .components(separatedBy: "\n")
+            .filter { line in
+                let trimmedLine = line.trimmingCharacters(in: .whitespaces)
+                return !trimmedLine.hasPrefix("do(") && !trimmedLine.hasPrefix("finish(")
+            }
+            .joined(separator: "\n")
         let systemPrompt = """
-        You are the Language Enhancer for an Android phone agent.
-        Your only job is to generate the exact final text that should be typed into the current input field.
+            You are the Language Enhancer for an Android phone agent.
+            Your only job is to generate the exact final text that should be typed into the current input field.
 
-        Hard rules:
-        - Return ONLY the final text.
-        - No explanations.
-        - No markdown.
-        - No labels such as USER PROMPT, CONTEXT, RESULT, or IMPORTANT.
-        - No surrounding quotes unless the text itself truly requires quotes.
-        - Keep the output grounded in the user's request and the AutoGLM screen context.
-        - Use the device persona as required context to deepen wording and tone checks while staying faithful to the user's intent.
-        - Preserve exact usernames, emails, URLs, OTP codes, numbers, hashtags, and search terms when they are already provided.
-        - Decide yourself whether the draft text should be kept exactly or improved; if it is already correct, return it unchanged.
-        - Always keep the same language as the user's request.
-        - Never return Chinese unless the user's request is explicitly in Chinese.
-        - If the AutoGLM draft mixes languages, rewrite it so the final text matches the user's request language.
-        - If the user asked for a caption, reply, search query, or short message, generate a concise natural result in the requested or implied language.
-        """
+            Hard rules:
+            - Return ONLY the final text.
+            - No explanations.
+            - No markdown.
+            - No labels such as USER PROMPT, CONTEXT, RESULT, or IMPORTANT.
+            - No surrounding quotes unless the text itself truly requires quotes.
+            - NEVER return action syntax like do(action=...) or finish(message=...). Only return the plain text to type.
+            - Keep the output grounded in the user's request and the AutoGLM screen context.
+            - Use the device persona as required context to deepen wording and tone checks while staying faithful to the user's intent.
+            - Preserve exact usernames, emails, URLs, OTP codes, numbers, hashtags, and search terms when they are already provided.
+            - Decide yourself whether the draft text should be kept exactly or improved; if it is already correct, return it unchanged.
+            - Always keep the same language as the user's request.
+            - Never return Chinese unless the user's request is explicitly in Chinese.
+            - If the AutoGLM draft mixes languages, rewrite it so the final text matches the user's request language.
+            - If the user asked for a caption, reply, search query, or short message, generate a concise natural result in the requested or implied language.
+            """
 
+        let conversationSection = conversationContext.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? "[No prior conversation steps available.]"
+            : conversationContext
         let userPrompt = """
-        USER PROMPT :
-        \(task)
+            USER PROMPT :
+            \(task)
 
-        CONTEXT :
-        Based on image that seen by AutoGLM, and the current screen/app state below.
+            CONTEXT :
+            Based on image that seen by AutoGLM, and the current screen/app state below.
 
-        Current app:
-        \(currentApp ?? "Unknown")
+            Current app:
+            \(currentApp ?? "Unknown")
 
-        AutoGLM draft text:
-        \(draftText)
+            AutoGLM draft text:
+            \(draftText)
 
-        Device persona:
-        \(personaText)
+            Device persona:
+            \(personaText)
 
-        Preferred apps:
-        \(preferredAppsText)
+            Preferred apps:
+            \(preferredAppsText)
 
-        Device notes:
-        \(notesText)
+            Device notes:
+            \(notesText)
 
-        AutoGLM reasoning:
-        \(modelThinking)
+            Conversation history (previous steps taken by the agent):
+            \(conversationSection)
 
-        Screen context:
-        \(screenInfo)
+            AutoGLM reasoning (current step):
+            \(sanitizedThinking)
 
-        Please generate text caption with language based on user prompt, make sure you're under the context.
+            Screen context:
+            \(screenInfo)
 
-        Expected result :
-        IMPORTANT :
-        TEXT RESULT WITHOUT ANY UNRELATED TEXT
-        """
+            Please generate text caption with language based on user prompt, make sure you're under the context.
+
+            Expected result :
+            IMPORTANT :
+            TEXT RESULT WITHOUT ANY UNRELATED TEXT
+            """
 
         return try await requestPlainText(
             systemPrompt: systemPrompt,
@@ -1313,7 +1659,8 @@ private struct NativeLanguageEnhancerClient: Sendable {
 
     private func normalizedDeviceNotesText(from deviceNotes: String) -> String {
         let trimmed = deviceNotes.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? "No extra device notes or safety rules were provided for this device." : trimmed
+        return trimmed.isEmpty
+            ? "No extra device notes or safety rules were provided for this device." : trimmed
     }
 
     private func requestPlainText(
@@ -1324,10 +1671,12 @@ private struct NativeLanguageEnhancerClient: Sendable {
     ) async throws -> String {
         let requestTargets = configuration.languageEnhancerRequestTargets
         guard !requestTargets.isEmpty else {
-            throw NativeAgentError.invalidConfiguration("Please enter a valid Language Enhancer server URL in Settings → AI Models.")
+            throw NativeAgentError.invalidConfiguration(
+                "Please enter a valid Language Enhancer server URL in Settings → AI Models.")
         }
 
-        var lastError: Error = NativeAgentError.invalidConfiguration("No usable Language Enhancer endpoint was found.")
+        var lastError: Error = NativeAgentError.invalidConfiguration(
+            "No usable Language Enhancer endpoint was found.")
 
         for target in requestTargets {
             let endpoints = candidateURLs(from: target.baseURL, path: "chat/completions")
@@ -1337,11 +1686,11 @@ private struct NativeLanguageEnhancerClient: Sendable {
                 "model": target.model,
                 "messages": [
                     ["role": "system", "content": systemPrompt],
-                    ["role": "user", "content": userPrompt]
+                    ["role": "user", "content": userPrompt],
                 ],
                 "max_tokens": maxTokens,
                 "temperature": 0.2,
-                "top_p": 0.7
+                "top_p": 0.7,
             ]
 
             let body = try JSONSerialization.data(withJSONObject: payload, options: [])
@@ -1356,25 +1705,34 @@ private struct NativeLanguageEnhancerClient: Sendable {
 
                     let (data, response) = try await URLSession.shared.data(for: request)
                     guard let httpResponse = response as? HTTPURLResponse else {
-                        throw NativeAgentError.server("The \(target.label) returned an invalid response.")
+                        throw NativeAgentError.server(
+                            "The \(target.label) returned an invalid response.")
                     }
 
                     if httpResponse.statusCode == 401 || httpResponse.statusCode == 403 {
-                        throw NativeAgentError.server("Authentication failed for \(target.label). Check the API key in Settings → AI Models.")
+                        throw NativeAgentError.server(
+                            "Authentication failed for \(target.label). Check the API key in Settings → AI Models."
+                        )
                     }
 
                     guard (200...299).contains(httpResponse.statusCode) else {
-                        let errorMessage = Self.extractErrorMessage(from: data) ?? "\(target.label) returned HTTP \(httpResponse.statusCode)."
+                        let errorMessage =
+                            Self.extractErrorMessage(from: data)
+                            ?? "\(target.label) returned HTTP \(httpResponse.statusCode)."
                         throw NativeAgentError.server(errorMessage)
                     }
 
                     if let content = Self.extractContent(from: data), !content.isEmpty {
-                        return preserveMultiline ? Self.cleanedRichText(content) : Self.cleanedText(content)
+                        return preserveMultiline
+                            ? Self.cleanedRichText(content) : Self.cleanedText(content)
                     }
 
-                    throw NativeAgentError.server("The \(target.label) returned an empty completion.")
+                    throw NativeAgentError.server(
+                        "The \(target.label) returned an empty completion.")
                 } catch {
-                    lastError = NativeAgentError.server("\(target.label) failed at \(endpoint.absoluteString): \(error.localizedDescription)")
+                    lastError = NativeAgentError.server(
+                        "\(target.label) failed at \(endpoint.absoluteString): \(error.localizedDescription)"
+                    )
                 }
             }
         }
@@ -1403,7 +1761,9 @@ private struct NativeLanguageEnhancerClient: Sendable {
             normalized = trimmed
         } else {
             let isLocalHost = trimmed.hasPrefix("localhost") || trimmed.hasPrefix("127.")
-            let looksLikeIPAddress = trimmed.range(of: #"^\d{1,3}(\.\d{1,3}){3}(:\d+)?/?$"#, options: .regularExpression) != nil
+            let looksLikeIPAddress =
+                trimmed.range(of: #"^\d{1,3}(\.\d{1,3}){3}(:\d+)?/?$"#, options: .regularExpression)
+                != nil
             normalized = (isLocalHost || looksLikeIPAddress ? "http://" : "https://") + trimmed
         }
 
@@ -1419,7 +1779,8 @@ private struct NativeLanguageEnhancerClient: Sendable {
         } else if normalizedPath == "v1" || normalizedPath.hasSuffix("/v1") {
             candidates.append(baseURL.appendingPathComponent(cleanPath))
         } else {
-            candidates.append(baseURL.appendingPathComponent("v1").appendingPathComponent(cleanPath))
+            candidates.append(
+                baseURL.appendingPathComponent("v1").appendingPathComponent(cleanPath))
             candidates.append(baseURL.appendingPathComponent(cleanPath))
         }
 
@@ -1429,9 +1790,11 @@ private struct NativeLanguageEnhancerClient: Sendable {
 
     private static func extractContent(from data: Data) -> String? {
         guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let choices = object["choices"] as? [[String: Any]],
-              let first = choices.first else {
-            return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let choices = object["choices"] as? [[String: Any]],
+            let first = choices.first
+        else {
+            return String(data: data, encoding: .utf8)?.trimmingCharacters(
+                in: .whitespacesAndNewlines)
         }
 
         if let message = first["message"] as? [String: Any] {
@@ -1463,7 +1826,8 @@ private struct NativeLanguageEnhancerClient: Sendable {
             text = text.replacingOccurrences(of: "```text", with: "")
         }
 
-        text = text
+        text =
+            text
             .replacingOccurrences(of: "```", with: "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
 
@@ -1479,7 +1843,7 @@ private struct NativeLanguageEnhancerClient: Sendable {
             #"(?i)^result\s*:\s*"#,
             #"(?i)^caption\s*:\s*"#,
             #"(?i)^enhanced\s*(task|prompt)\s*:\s*"#,
-            #"(?i)^rewritten\s*(task|prompt)\s*:\s*"#
+            #"(?i)^rewritten\s*(task|prompt)\s*:\s*"#,
         ]
 
         for pattern in cleanupPatterns {
@@ -1488,20 +1852,24 @@ private struct NativeLanguageEnhancerClient: Sendable {
         }
 
         if text.contains("\n") {
-            let lines = text
+            let lines =
+                text
                 .split(separator: "\n")
                 .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
                 .filter { !$0.isEmpty }
 
             if let bestLine = lines.last(where: {
                 let lower = $0.lowercased()
-                return !lower.hasPrefix("important") && !lower.hasPrefix("text result") && !lower.hasPrefix("result")
+                return !lower.hasPrefix("important") && !lower.hasPrefix("text result")
+                    && !lower.hasPrefix("result")
             }) {
                 text = bestLine
             }
         }
 
-        if (text.hasPrefix("\"") && text.hasSuffix("\"")) || (text.hasPrefix("'") && text.hasSuffix("'")) {
+        if (text.hasPrefix("\"") && text.hasSuffix("\""))
+            || (text.hasPrefix("'") && text.hasSuffix("'"))
+        {
             text.removeFirst()
             text.removeLast()
         }
@@ -1511,11 +1879,13 @@ private struct NativeLanguageEnhancerClient: Sendable {
 
     private static func extractErrorMessage(from data: Data) -> String? {
         guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            return String(data: data, encoding: .utf8)?.trimmingCharacters(
+                in: .whitespacesAndNewlines)
         }
 
         if let errorObject = object["error"] as? [String: Any],
-           let message = errorObject["message"] as? String {
+            let message = errorObject["message"] as? String
+        {
             return message
         }
 
@@ -1577,7 +1947,10 @@ private struct NativeAgentMessage {
                 let mimeType = imageMimeType ?? "image/png"
                 content.append([
                     "type": "image_url",
-                    "image_url": ["url": "data:\(mimeType);base64,\(imageBase64)"]
+                    "image_url": [
+                        "url": "data:\(mimeType);base64,\(imageBase64)",
+                        "detail": "high",
+                    ],
                 ])
             }
             content.append(["type": "text", "text": text])
@@ -1627,38 +2000,39 @@ private enum NativeAgentAction {
             return "wait"
         case .takeOver:
             return "take over"
-        case let .unknown(name, _):
+        case .unknown(let name, _):
             return name
         }
     }
 
     var logDescription: String {
         switch self {
-        case let .finish(message):
+        case .finish(let message):
             return "finish(\(message ?? "done"))"
-        case let .listApp(query):
+        case .listApp(let query):
             return "ListApp(\(query ?? "all"))"
-        case let .launch(app):
+        case .launch(let app):
             return "Launch \(app)"
-        case let .tap(point, _):
+        case .tap(let point, _):
             return "Tap [\(point.x), \(point.y)]"
-        case let .doubleTap(point):
+        case .doubleTap(let point):
             return "Double Tap [\(point.x), \(point.y)]"
-        case let .longPress(point):
+        case .longPress(let point):
             return "Long Press [\(point.x), \(point.y)]"
-        case let .swipe(start, end):
+        case .swipe(let start, let end):
             return "Swipe [\(start.x), \(start.y)] → [\(end.x), \(end.y)]"
-        case let .type(text, enhance):
-            return enhance ? "Type \(text.debugDescription) [enhance]" : "Type \(text.debugDescription)"
+        case .type(let text, let enhance):
+            return enhance
+                ? "Type \(text.debugDescription) [enhance]" : "Type \(text.debugDescription)"
         case .back:
             return "Back"
         case .home:
             return "Home"
-        case let .wait(seconds):
+        case .wait(let seconds):
             return "Wait \(String(format: "%.1f", seconds))s"
-        case let .takeOver(message):
+        case .takeOver(let message):
             return "Take over: \(message ?? "manual action required")"
-        case let .unknown(name, raw):
+        case .unknown(let name, let raw):
             return "\(name) → \(raw)"
         }
     }
@@ -1670,14 +2044,37 @@ private struct NativeRelativePoint {
 }
 
 private enum NativeActionParser {
+    /// Convert from the shared `AIModelAction` to the internal `NativeAgentAction`.
+    static func fromModelAction(_ action: AIModelAction) -> NativeAgentAction {
+        switch action {
+        case .finish(let message): return .finish(message: message)
+        case .listApp(let query): return .listApp(query: query)
+        case .launch(let app): return .launch(app: app)
+        case .tap(let x, let y, let message):
+            return .tap(point: NativeRelativePoint(x: x, y: y), message: message)
+        case .doubleTap(let x, let y): return .doubleTap(point: NativeRelativePoint(x: x, y: y))
+        case .longPress(let x, let y): return .longPress(point: NativeRelativePoint(x: x, y: y))
+        case .swipe(let sx, let sy, let ex, let ey):
+            return .swipe(
+                start: NativeRelativePoint(x: sx, y: sy), end: NativeRelativePoint(x: ex, y: ey))
+        case .type(let text, let enhance): return .type(text: text, enhance: enhance)
+        case .back: return .back
+        case .home: return .home
+        case .wait(let seconds): return .wait(seconds: seconds)
+        case .takeOver(let message): return .takeOver(message: message)
+        case .unknown(let name, let raw): return .unknown(name: name, raw: raw)
+        }
+    }
+
     static func parse(_ rawResponse: String) -> NativeAgentAction {
-        let trimmed = extractAnswer(from: rawResponse).trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = extractAnswer(from: rawResponse).trimmingCharacters(
+            in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             return .finish(message: "The model returned an empty response.")
         }
 
         if trimmed.hasPrefix("finish") {
-            return .finish(message: quotedValue(named: "message", in: trimmed))
+            return .finish(message: AIModelParsingUtils.extractFinishMessage(from: trimmed))
         }
 
         guard trimmed.hasPrefix("do") else {
@@ -1707,7 +2104,8 @@ private enum NativeActionParser {
             }
         case "Swipe":
             if let start = point(named: "start", in: trimmed),
-               let end = point(named: "end", in: trimmed) {
+                let end = point(named: "end", in: trimmed)
+            {
                 return .swipe(start: start, end: end)
             }
         case "Type", "Type_Name":
@@ -1763,10 +2161,11 @@ private enum NativeActionParser {
         guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
         let range = NSRange(text.startIndex..., in: text)
         guard let match = regex.firstMatch(in: text, range: range), match.numberOfRanges == 3,
-              let xRange = Range(match.range(at: 1), in: text),
-              let yRange = Range(match.range(at: 2), in: text),
-              let x = Int(text[xRange]),
-              let y = Int(text[yRange]) else {
+            let xRange = Range(match.range(at: 1), in: text),
+            let yRange = Range(match.range(at: 2), in: text),
+            let x = Int(text[xRange]),
+            let y = Int(text[yRange])
+        else {
             return nil
         }
         return NativeRelativePoint(x: x, y: y)
@@ -1806,7 +2205,8 @@ private enum NativeActionParser {
         guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
         let range = NSRange(text.startIndex..., in: text)
         guard let match = regex.firstMatch(in: text, range: range), match.numberOfRanges > 1,
-              let captureRange = Range(match.range(at: 1), in: text) else {
+            let captureRange = Range(match.range(at: 1), in: text)
+        else {
             return nil
         }
         return String(text[captureRange])
@@ -1822,163 +2222,6 @@ private enum NativeActionParser {
     }
 }
 
-private enum NativeResponseParser {
-    static func parse(content: String) -> (thinking: String, action: String) {
-        if let range = content.range(of: "finish(message=") {
-            return (String(content[..<range.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines),
-                    String(content[range.lowerBound...]).trimmingCharacters(in: .whitespacesAndNewlines))
-        }
-
-        if let range = content.range(of: "do(action=") {
-            return (String(content[..<range.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines),
-                    String(content[range.lowerBound...]).trimmingCharacters(in: .whitespacesAndNewlines))
-        }
-
-        if let thinkStart = content.range(of: "<think>"),
-           let thinkEnd = content.range(of: "</think>"),
-           let answerStart = content.range(of: "<answer>") {
-            let thinking = String(content[thinkStart.upperBound..<thinkEnd.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
-            let actionEnd = content.range(of: "</answer>")?.lowerBound ?? content.endIndex
-            let action = String(content[answerStart.upperBound..<actionEnd]).trimmingCharacters(in: .whitespacesAndNewlines)
-            return (thinking, action)
-        }
-
-        return ("", content.trimmingCharacters(in: .whitespacesAndNewlines))
-    }
-}
-
-private enum NativeAgentPromptBuilder {
-    static func systemPrompt(
-        userTask: String,
-        devicePersona: String = "",
-        preferredApps: String = "",
-        deviceNotes: String = ""
-    ) -> String {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "yyyy-MM-dd, EEEE"
-        let formattedDate = formatter.string(from: Date())
-        let languageName = inferredLanguageName(from: userTask)
-        let personaText = devicePersona.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            ? "Careful, context-aware, detail-oriented assistant who matches the user's language naturally and double-checks tone before replying."
-            : devicePersona.trimmingCharacters(in: .whitespacesAndNewlines)
-        let preferredAppsText = preferredApps.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            ? "No preferred apps were specified for this device."
-            : preferredApps.trimmingCharacters(in: .whitespacesAndNewlines)
-        let notesText = deviceNotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            ? "No extra device notes or safety rules were provided for this device."
-            : deviceNotes.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        return """
-        The current date: \(formattedDate)
-        # Setup
-        You are a professional Android operation agent assistant that can fulfill the user's high-level instructions. Given a screenshot of the Android interface at each step, you first analyze the situation, then plan the best course of action using Python-style pseudo-code.
-
-        User request language to keep: \(languageName)
-        Device persona for this run: \(personaText)
-        Preferred apps for this device: \(preferredAppsText)
-        Device notes and safety rules: \(notesText)
-
-        Your response format must be structured as follows:
-        <think>
-        [Your thought]
-        </think>
-        <answer>
-        [Your operation code]
-        </answer>
-
-        - Tap: <answer>do(action="Tap", element=[x,y])</answer>
-        - Type: <answer>do(action="Type", text="Hello World")</answer>
-        - Type with optional refinement: <answer>do(action="Type", text="short draft or intent", enhance=true)</answer>
-        - Swipe: <answer>do(action="Swipe", start=[x1,y1], end=[x2,y2])</answer>
-        - Long Press: <answer>do(action="Long Press", element=[x,y])</answer>
-        - List installed apps: <answer>do(action="ListApp", query="Instagram")</answer>
-        - Launch: <answer>do(action="Launch", app="Settings")</answer>
-        - Back: <answer>do(action="Back")</answer>
-        - Home: <answer>do(action="Home")</answer>
-        - Finish: <answer>finish(message="Task completed.")</answer>
-
-        REMEMBER:
-        - Think before you act.
-        - Return exactly one action line in <answer>.
-        - If the user only needs a direct answer with no phone interaction, respond with `finish(message="...")` in the user's language.
-        - Use coordinates on a 0-1000 scale, not raw pixels.
-        - Keep the same language as the user's request for your reasoning and any generated text.
-        - The user's request language for this run is \(languageName).
-        - Treat the device persona as required context for tone, depth, and interaction style, but never change the user's core goal.
-        - Prefer apps listed in the device preferences when multiple app choices can satisfy the task.
-        - Respect the device notes, account context, and any safety rules whenever they are relevant.
-        - Never switch to Chinese unless the user's request is explicitly written in Chinese.
-        - If the user's request is in Indonesian, stay in Indonesian.
-        - If you want to open an app and you are not fully sure which package or exact app is installed, call `ListApp` first.
-        - `ListApp` gives you installed apps and package names from ADB. Use that result to decide the next `Launch(app="...")` call.
-        - `Launch` should be used after `ListApp` when app availability matters; if the requested app is not installed, it may open Google Play.
-        - For text entry, provide the exact final text whenever it is already known.
-        - For every `Type(...)` action, the Language Enhancer will verify whether to keep or refine the text so it matches the user's language and intent.
-        - NEVER REPLY WITH CHINESE UNLESS THE USER'S REQUEST IS IN CHINESE. If the user's request is in Indonesian, reply in Indonesian. Otherwise, reply in English.
-        """
-    }
-
-    private static func inferredLanguageName(from text: String) -> String {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return "English" }
-
-        if trimmed.range(of: #"\p{Han}"#, options: .regularExpression) != nil {
-            return "Chinese"
-        }
-
-        let recognizer = NLLanguageRecognizer()
-        recognizer.processString(trimmed)
-        let hypotheses = recognizer.languageHypotheses(withMaximum: 4)
-
-        let indonesianConfidence = (hypotheses[.indonesian] ?? 0) + (hypotheses[.malay] ?? 0)
-        let englishConfidence = hypotheses[.english] ?? 0
-
-        if indonesianConfidence >= 0.60 || (indonesianConfidence >= 0.35 && indonesianConfidence > englishConfidence + 0.10) {
-            return "Indonesian"
-        }
-
-        if englishConfidence >= 0.60 {
-            return "English"
-        }
-
-        let lowercased = " \(trimmed.lowercased()) "
-        let indonesianHints = [
-            " yang ", " dan ", " untuk ", " dengan ", " tidak ", " saya ", " kamu ",
-            " buka ", " cari ", " komentar ", " komen ", " postingan ", " gambar ",
-            " deskripsi ", " akun ", " tolong ", " apakah ", " bagaimana "
-        ]
-        let englishHints = [
-            " the ", " and ", " for ", " with ", " open ", " search ",
-            " comment ", " caption ", " image ", " account ", " please "
-        ]
-
-        let indonesianMatches = indonesianHints.reduce(into: 0) { count, hint in
-            if lowercased.contains(hint) { count += 1 }
-        }
-        let englishMatches = englishHints.reduce(into: 0) { count, hint in
-            if lowercased.contains(hint) { count += 1 }
-        }
-
-        if indonesianMatches >= 2 && indonesianMatches > englishMatches {
-            return "Indonesian"
-        }
-
-        return "English"
-    }
-
-    static func screenInfo(currentApp: String?) -> String {
-        let payload = ["current_app": currentApp ?? "Unknown"]
-
-        guard let data = try? JSONSerialization.data(withJSONObject: payload, options: []),
-              let string = String(data: data, encoding: .utf8) else {
-            return "{\"current_app\":\"\(currentApp ?? "Unknown")\"}"
-        }
-
-        return string
-    }
-}
-
 private enum NativeAgentError: LocalizedError {
     case invalidConfiguration(String)
     case server(String)
@@ -1986,9 +2229,9 @@ private enum NativeAgentError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case let .invalidConfiguration(message):
+        case .invalidConfiguration(let message):
             return message
-        case let .server(message):
+        case .server(let message):
             return message
         case .maxStepsReached:
             return "The task stopped after reaching the maximum number of agent steps."
@@ -1999,10 +2242,11 @@ private enum NativeAgentError: LocalizedError {
 // MARK: - Agent Chat Log Components
 
 private enum AgentChatEntryKind {
-    case setup          // initial setup lines
-    case aiResponse     // the AI thinking text (bubble)
-    case actionToast    // "Triggering Action Tap [897,897]"
-    case infoToast      // "Info: Opened Instagram..."
+    case setup  // initial setup lines
+    case aiResponse  // the AI thinking text (bubble)
+    case actionToast  // "Triggering Action Tap [897,897]"
+    case infoToast  // "Info: Opened Instagram..."
+    case finishBubble  // the finish message shown as a bubble
     case success
     case error
     case warning
@@ -2013,12 +2257,14 @@ private struct AgentChatEntry: Identifiable {
     let id = UUID()
     let kind: AgentChatEntryKind
     let text: String
-    let appName: String?       // e.g. "Instagram"
-    let actionLabel: String?   // e.g. "Tapping"
+    let appName: String?  // e.g. "Instagram"
+    let actionLabel: String?  // e.g. "Tapping"
     let stepNumber: Int?
+    let screenshotData: Data?  // screenshot captured at this step
+    let compressionInfo: String?  // e.g. "1.20 MB → 198.5 KB"
 }
 
-private func parseLogIntoChatEntries(_ logText: String) -> [AgentChatEntry] {
+private func parseLogIntoChatEntries(_ logText: String, screenshotsByStep: [Int: Data] = [:]) -> [AgentChatEntry] {
     let lines = logText.components(separatedBy: "\n")
     var entries: [AgentChatEntry] = []
     var setupBuffer = ""
@@ -2026,13 +2272,16 @@ private func parseLogIntoChatEntries(_ logText: String) -> [AgentChatEntry] {
     var currentApp: String? = nil
     var currentAction: String? = nil
     var currentStep: Int? = nil
+    var currentCompressionInfo: String? = nil
     var inThinking = false
     var didEmitSetup = false
 
     func flushSetup() {
         let trimmed = setupBuffer.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        entries.append(AgentChatEntry(kind: .setup, text: trimmed, appName: nil, actionLabel: nil, stepNumber: nil))
+        entries.append(
+            AgentChatEntry(
+                kind: .setup, text: trimmed, appName: nil, actionLabel: nil, stepNumber: nil, screenshotData: nil, compressionInfo: nil))
         setupBuffer = ""
         didEmitSetup = true
     }
@@ -2043,24 +2292,42 @@ private func parseLogIntoChatEntries(_ logText: String) -> [AgentChatEntry] {
         // Strip leading "Thinking:\n" or "Thinking:" prefix
         var cleanText = trimmed
         if cleanText.hasPrefix("Thinking:") {
-            cleanText = String(cleanText.dropFirst(9)).trimmingCharacters(in: .whitespacesAndNewlines)
+            cleanText = String(cleanText.dropFirst(9)).trimmingCharacters(
+                in: .whitespacesAndNewlines)
         }
+        if cleanText.hasPrefix("Think:") {
+            cleanText = String(cleanText.dropFirst(6)).trimmingCharacters(
+                in: .whitespacesAndNewlines)
+        }
+        // Strip XML-style thinking tags from AutoGLM-style responses
+        cleanText =
+            cleanText
+            .replacingOccurrences(of: "<think>", with: "")
+            .replacingOccurrences(of: "</think>", with: "")
+            .replacingOccurrences(of: "<answer>", with: "")
+            .replacingOccurrences(of: "</answer>", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleanText.isEmpty else {
             thinkingBuffer = ""
             inThinking = false
             return
         }
         let appLabel = friendlyAppName(currentApp)
-        entries.append(AgentChatEntry(
-            kind: .aiResponse,
-            text: cleanText,
-            appName: appLabel,
-            actionLabel: currentAction,
-            stepNumber: currentStep
-        ))
+        let stepScreenshot = currentStep.flatMap { screenshotsByStep[$0] }
+        entries.append(
+            AgentChatEntry(
+                kind: .aiResponse,
+                text: cleanText,
+                appName: appLabel,
+                actionLabel: currentAction,
+                stepNumber: currentStep,
+                screenshotData: stepScreenshot,
+                compressionInfo: currentCompressionInfo
+            ))
         thinkingBuffer = ""
         inThinking = false
         currentAction = nil
+        currentCompressionInfo = nil
     }
 
     for line in lines {
@@ -2101,10 +2368,21 @@ private func parseLogIntoChatEntries(_ logText: String) -> [AgentChatEntry] {
         // Action line
         if trimmed.hasPrefix("Action:") || trimmed.hasPrefix("action:") {
             if inThinking { flushThinking() }
-            let rawAction = String(trimmed.dropFirst(7)).trimmingCharacters(in: .whitespacesAndNewlines)
+            let rawAction = String(trimmed.dropFirst(7)).trimmingCharacters(
+                in: .whitespacesAndNewlines)
             currentAction = friendlyActionVerb(rawAction)
-            let toastText = "Triggering \(rawAction)"
-            entries.append(AgentChatEntry(kind: .actionToast, text: toastText, appName: friendlyAppName(currentApp), actionLabel: nil, stepNumber: currentStep))
+            // For finish actions, show the clean message instead of the raw format
+            let toastText: String
+            if rawAction.lowercased().hasPrefix("finish") {
+                let cleanMsg = AIModelParsingUtils.stripFinishWrapper(rawAction)
+                toastText = "Triggering finish(\(cleanMsg))"
+            } else {
+                toastText = "Triggering \(rawAction)"
+            }
+            entries.append(
+                AgentChatEntry(
+                    kind: .actionToast, text: toastText, appName: friendlyAppName(currentApp),
+                    actionLabel: nil, stepNumber: currentStep, screenshotData: nil, compressionInfo: nil))
             continue
         }
 
@@ -2112,7 +2390,15 @@ private func parseLogIntoChatEntries(_ logText: String) -> [AgentChatEntry] {
         if trimmed.hasPrefix("Info:") {
             let msg = String(trimmed.dropFirst(5)).trimmingCharacters(in: .whitespacesAndNewlines)
             if !msg.isEmpty {
-                entries.append(AgentChatEntry(kind: .infoToast, text: msg, appName: nil, actionLabel: nil, stepNumber: currentStep))
+                // Capture screenshot compression info for the next AI response bubble
+                if msg.hasPrefix("Screenshot ") {
+                    currentCompressionInfo = String(msg.dropFirst(11))
+                    continue
+                }
+                entries.append(
+                    AgentChatEntry(
+                        kind: .infoToast, text: msg, appName: nil, actionLabel: nil,
+                        stepNumber: currentStep, screenshotData: nil, compressionInfo: nil))
             }
             continue
         }
@@ -2120,28 +2406,47 @@ private func parseLogIntoChatEntries(_ logText: String) -> [AgentChatEntry] {
         // Success
         if trimmed.hasPrefix("Success:") {
             if inThinking { flushThinking() }
-            entries.append(AgentChatEntry(kind: .success, text: String(trimmed.dropFirst(8)).trimmingCharacters(in: .whitespacesAndNewlines), appName: nil, actionLabel: nil, stepNumber: nil))
+            let finishText = String(trimmed.dropFirst(8)).trimmingCharacters(in: .whitespacesAndNewlines)
+            entries.append(
+                AgentChatEntry(
+                    kind: .finishBubble,
+                    text: finishText, appName: nil, actionLabel: nil,
+                    stepNumber: nil, screenshotData: nil, compressionInfo: nil))
             continue
         }
 
         // Error
         if trimmed.hasPrefix("Error:") {
             if inThinking { flushThinking() }
-            entries.append(AgentChatEntry(kind: .error, text: String(trimmed.dropFirst(6)).trimmingCharacters(in: .whitespacesAndNewlines), appName: nil, actionLabel: nil, stepNumber: nil))
+            entries.append(
+                AgentChatEntry(
+                    kind: .error,
+                    text: String(trimmed.dropFirst(6)).trimmingCharacters(
+                        in: .whitespacesAndNewlines), appName: nil, actionLabel: nil,
+                    stepNumber: nil, screenshotData: nil, compressionInfo: nil))
             continue
         }
 
         // Warning
         if trimmed.hasPrefix("Warning:") {
             if inThinking { flushThinking() }
-            entries.append(AgentChatEntry(kind: .warning, text: String(trimmed.dropFirst(8)).trimmingCharacters(in: .whitespacesAndNewlines), appName: nil, actionLabel: nil, stepNumber: nil))
+            entries.append(
+                AgentChatEntry(
+                    kind: .warning,
+                    text: String(trimmed.dropFirst(8)).trimmingCharacters(
+                        in: .whitespacesAndNewlines), appName: nil, actionLabel: nil,
+                    stepNumber: nil, screenshotData: nil, compressionInfo: nil))
             continue
         }
 
         // Cancelled
         if trimmed == "Run cancelled." || trimmed == "Cancel requested by user." {
             if inThinking { flushThinking() }
-            entries.append(AgentChatEntry(kind: .cancelled, text: trimmed, appName: nil, actionLabel: nil, stepNumber: nil))
+            entries.append(
+                AgentChatEntry(
+                    kind: .cancelled, text: trimmed, appName: nil, actionLabel: nil, stepNumber: nil,
+                    screenshotData: nil, compressionInfo: nil
+                ))
             continue
         }
 
@@ -2164,7 +2469,10 @@ private func friendlyAppName(_ packageName: String?) -> String? {
     guard let pkg = packageName, !pkg.isEmpty, pkg != "Unknown" else { return nil }
     // Extract last meaningful part: com.instagram.android → Instagram
     let parts = pkg.components(separatedBy: ".")
-    let candidates = parts.filter { $0 != "com" && $0 != "android" && $0 != "app" && $0 != "mobile" && $0 != "org" && $0 != "net" }
+    let candidates = parts.filter {
+        $0 != "com" && $0 != "android" && $0 != "app" && $0 != "mobile" && $0 != "org"
+            && $0 != "net"
+    }
     if let name = candidates.first {
         return name.prefix(1).uppercased() + name.dropFirst()
     }
@@ -2189,9 +2497,10 @@ private func friendlyActionVerb(_ rawAction: String) -> String {
 
 private struct AgentChatLogView: View {
     let logText: String
+    let screenshotsByStep: [Int: Data]
 
     private var entries: [AgentChatEntry] {
-        parseLogIntoChatEntries(logText)
+        parseLogIntoChatEntries(logText, screenshotsByStep: screenshotsByStep)
     }
 
     var body: some View {
@@ -2206,12 +2515,16 @@ private struct AgentChatLogView: View {
                     AgentActionToast(text: entry.text, appName: entry.appName)
                 case .infoToast:
                     AgentInfoToast(text: entry.text)
+                case .finishBubble:
+                    AgentFinishBubble(text: entry.text)
                 case .success:
                     AgentStatusEntry(text: entry.text, icon: "checkmark.circle.fill", color: .green)
                 case .error:
-                    AgentStatusEntry(text: entry.text, icon: "exclamationmark.triangle.fill", color: .red)
+                    AgentStatusEntry(
+                        text: entry.text, icon: "exclamationmark.triangle.fill", color: .red)
                 case .warning:
-                    AgentStatusEntry(text: entry.text, icon: "exclamationmark.triangle", color: .orange)
+                    AgentStatusEntry(
+                        text: entry.text, icon: "exclamationmark.triangle", color: .orange)
                 case .cancelled:
                     AgentStatusEntry(text: entry.text, icon: "stop.circle", color: .secondary)
                 }
@@ -2237,7 +2550,9 @@ private struct AgentSetupEntry: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(colorScheme == .dark ? Color.white.opacity(0.03) : Color.black.opacity(0.02))
+                    .fill(
+                        colorScheme == .dark ? Color.white.opacity(0.03) : Color.black.opacity(0.02)
+                    )
             )
     }
 }
@@ -2247,6 +2562,7 @@ private struct AgentSetupEntry: View {
 private struct AgentResponseBubble: View {
     let entry: AgentChatEntry
     @Environment(\.colorScheme) private var colorScheme
+    @State private var isScreenshotExpanded = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -2279,8 +2595,43 @@ private struct AgentResponseBubble: View {
             }
             .padding(.horizontal, 4)
 
-            // Bubble
-            HStack {
+            // Screenshot + Bubble
+            HStack(alignment: .top, spacing: 8) {
+                // Screenshot thumbnail
+                if let screenshotData = entry.screenshotData,
+                   let nsImage = NSImage(data: screenshotData) {
+                    VStack(spacing: 3) {
+                        Button {
+                            isScreenshotExpanded.toggle()
+                        } label: {
+                            Image(nsImage: nsImage)
+                                .resizable()
+                                .aspectRatio(contentMode: .fit)
+                                .frame(width: isScreenshotExpanded ? 240 : 64, height: isScreenshotExpanded ? 480 : 114)
+                                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                        .stroke(
+                                            colorScheme == .dark
+                                                ? Color.white.opacity(0.10)
+                                                : Color.black.opacity(0.08),
+                                            lineWidth: 0.5
+                                        )
+                                )
+                                .shadow(color: .black.opacity(0.12), radius: 4, x: 0, y: 2)
+                        }
+                        .buttonStyle(.plain)
+                        .animation(.easeInOut(duration: 0.2), value: isScreenshotExpanded)
+
+                        if let info = entry.compressionInfo {
+                            Text(info)
+                                .font(.system(size: 8, weight: .medium, design: .monospaced))
+                                .foregroundStyle(.tertiary)
+                        }
+                    }
+                }
+
+                // Text bubble
                 Text(entry.text)
                     .font(.system(size: 12))
                     .foregroundStyle(.primary)
@@ -2306,8 +2657,9 @@ private struct AgentResponseBubble: View {
                 .fill(
                     LinearGradient(
                         colors: [
-                            colorScheme == .dark ? Color.white.opacity(0.03) : Color.white.opacity(0.40),
-                            Color.clear
+                            colorScheme == .dark
+                                ? Color.white.opacity(0.03) : Color.white.opacity(0.40),
+                            Color.clear,
                         ],
                         startPoint: .top,
                         endPoint: .bottom
@@ -2318,8 +2670,10 @@ private struct AgentResponseBubble: View {
                 .stroke(
                     LinearGradient(
                         colors: [
-                            colorScheme == .dark ? Color.white.opacity(0.12) : Color.white.opacity(0.80),
-                            colorScheme == .dark ? Color.white.opacity(0.03) : Color.black.opacity(0.04)
+                            colorScheme == .dark
+                                ? Color.white.opacity(0.12) : Color.white.opacity(0.80),
+                            colorScheme == .dark
+                                ? Color.white.opacity(0.03) : Color.black.opacity(0.04),
                         ],
                         startPoint: .topLeading,
                         endPoint: .bottomTrailing
@@ -2394,6 +2748,48 @@ private struct AgentInfoToast: View {
     }
 }
 
+// MARK: - Finish message bubble
+
+private struct AgentFinishBubble: View {
+    let text: String
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 14))
+                .foregroundStyle(.green)
+                .padding(.top, 10)
+
+            Text(text)
+                .font(.system(size: 12))
+                .foregroundStyle(.primary)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .background(
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .fill(colorScheme == .dark
+                                ? Color.green.opacity(0.08)
+                                : Color.green.opacity(0.06))
+
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .stroke(
+                                colorScheme == .dark
+                                    ? Color.green.opacity(0.15)
+                                    : Color.green.opacity(0.20),
+                                lineWidth: 0.5
+                            )
+                    }
+                )
+
+            Spacer(minLength: 40)
+        }
+    }
+}
+
 // MARK: - Status entry (success/error/warning/cancelled)
 
 private struct AgentStatusEntry: View {
@@ -2445,7 +2841,10 @@ private struct AgentDeviceTab: View {
     var body: some View {
         Button(action: action) {
             Text(title)
-                .font(.system(size: 11, weight: isSelected ? .semibold : .regular, design: .monospaced))
+                .font(
+                    .system(
+                        size: 11, weight: isSelected ? .semibold : .regular, design: .monospaced)
+                )
                 .foregroundStyle(isSelected ? .primary : .secondary)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)
@@ -2457,8 +2856,9 @@ private struct AgentDeviceTab: View {
                             .fill(
                                 LinearGradient(
                                     colors: [
-                                        colorScheme == .dark ? Color.white.opacity(0.04) : Color.white.opacity(0.30),
-                                        Color.clear
+                                        colorScheme == .dark
+                                            ? Color.white.opacity(0.04) : Color.white.opacity(0.30),
+                                        Color.clear,
                                     ],
                                     startPoint: .top,
                                     endPoint: .bottom
@@ -2469,7 +2869,7 @@ private struct AgentDeviceTab: View {
                                 LinearGradient(
                                     colors: [
                                         tabColor.opacity(isSelected ? 0.30 : 0.12),
-                                        tabColor.opacity(0.06)
+                                        tabColor.opacity(0.06),
                                     ],
                                     startPoint: .topLeading,
                                     endPoint: .bottomTrailing
@@ -2547,7 +2947,9 @@ private struct AgentLogScrollObserver: NSViewRepresentable {
         }
 
         func attachIfNeeded() {
-            guard let scrollView = enclosingScrollView ?? superview?.enclosingScrollView else { return }
+            guard let scrollView = enclosingScrollView ?? superview?.enclosingScrollView else {
+                return
+            }
 
             if scrollView === observedScrollView {
                 notifyScrollState()
@@ -2571,7 +2973,8 @@ private struct AgentLogScrollObserver: NSViewRepresentable {
 
         private func notifyScrollState() {
             guard let scrollView = observedScrollView,
-                  let documentView = scrollView.documentView else { return }
+                let documentView = scrollView.documentView
+            else { return }
 
             let visibleMaxY = scrollView.contentView.bounds.maxY
             let remainingDistance = documentView.bounds.maxY - visibleMaxY
@@ -2607,7 +3010,9 @@ struct AgentLogWindowView: View {
 
     private var statusColor: Color {
         if runner.isRunning { return .orange }
-        if let lastExitCode = currentRun?.lastExitCode ?? runner.lastExitCode, lastExitCode != 0 { return .red }
+        if let lastExitCode = currentRun?.lastExitCode ?? runner.lastExitCode, lastExitCode != 0 {
+            return .red
+        }
         return .green
     }
 
@@ -2633,6 +3038,10 @@ struct AgentLogWindowView: View {
     private var displayedLogText: String {
         let text = currentRun?.logText ?? runner.logText
         return text.isEmpty ? "No AI activity yet." : text
+    }
+
+    private var displayedScreenshotsByStep: [Int: Data] {
+        currentRun?.screenshotsByStep ?? [:]
     }
 
     private func scrollToBottom(using proxy: ScrollViewProxy, animated: Bool = false) {
@@ -2719,10 +3128,16 @@ struct AgentLogWindowView: View {
                 .padding(.vertical, 5)
                 .background(
                     Capsule()
-                        .fill(colorScheme == .dark ? Color.white.opacity(0.06) : Color.black.opacity(0.04))
+                        .fill(
+                            colorScheme == .dark
+                                ? Color.white.opacity(0.06) : Color.black.opacity(0.04)
+                        )
                         .overlay(
                             Capsule()
-                                .stroke(colorScheme == .dark ? Color.white.opacity(0.08) : Color.black.opacity(0.06), lineWidth: 0.5)
+                                .stroke(
+                                    colorScheme == .dark
+                                        ? Color.white.opacity(0.08) : Color.black.opacity(0.06),
+                                    lineWidth: 0.5)
                         )
                 )
                 .disabled(runner.isRunning)
@@ -2731,7 +3146,9 @@ struct AgentLogWindowView: View {
             .padding(.vertical, 10)
             .background(
                 statusColor.opacity(0.06)
-                    .background(colorScheme == .dark ? Color.white.opacity(0.02) : Color.white.opacity(0.30))
+                    .background(
+                        colorScheme == .dark ? Color.white.opacity(0.02) : Color.white.opacity(0.30)
+                    )
             )
 
             Rectangle()
@@ -2758,7 +3175,9 @@ struct AgentLogWindowView: View {
                 }
 
                 Rectangle()
-                    .fill(colorScheme == .dark ? Color.white.opacity(0.06) : Color.black.opacity(0.06))
+                    .fill(
+                        colorScheme == .dark ? Color.white.opacity(0.06) : Color.black.opacity(0.06)
+                    )
                     .frame(height: 0.5)
             }
 
@@ -2773,7 +3192,7 @@ struct AgentLogWindowView: View {
 
                     if currentRun.isRunning {
                         Button("Stop") {
-                            runner.cancel()
+                            runner.cancelDevice(currentRun.deviceID)
                         }
                         .buttonStyle(.plain)
                         .font(.system(size: 11, weight: .medium))
@@ -2784,7 +3203,9 @@ struct AgentLogWindowView: View {
                 .padding(.vertical, 8)
 
                 Rectangle()
-                    .fill(colorScheme == .dark ? Color.white.opacity(0.06) : Color.black.opacity(0.06))
+                    .fill(
+                        colorScheme == .dark ? Color.white.opacity(0.06) : Color.black.opacity(0.06)
+                    )
                     .frame(height: 0.5)
             }
 
@@ -2805,14 +3226,20 @@ struct AgentLogWindowView: View {
                         .background(
                             ZStack {
                                 RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                    .fill(colorScheme == .dark ? Color.white.opacity(0.04) : Color.white.opacity(0.50))
+                                    .fill(
+                                        colorScheme == .dark
+                                            ? Color.white.opacity(0.04) : Color.white.opacity(0.50))
 
                                 RoundedRectangle(cornerRadius: 10, style: .continuous)
                                     .stroke(
                                         LinearGradient(
                                             colors: [
-                                                colorScheme == .dark ? Color.white.opacity(0.10) : Color.white.opacity(0.70),
-                                                colorScheme == .dark ? Color.white.opacity(0.03) : Color.black.opacity(0.04)
+                                                colorScheme == .dark
+                                                    ? Color.white.opacity(0.10)
+                                                    : Color.white.opacity(0.70),
+                                                colorScheme == .dark
+                                                    ? Color.white.opacity(0.03)
+                                                    : Color.black.opacity(0.04),
                                             ],
                                             startPoint: .topLeading,
                                             endPoint: .bottomTrailing
@@ -2826,7 +3253,9 @@ struct AgentLogWindowView: View {
                 .padding(.vertical, 10)
 
                 Rectangle()
-                    .fill(colorScheme == .dark ? Color.white.opacity(0.06) : Color.black.opacity(0.06))
+                    .fill(
+                        colorScheme == .dark ? Color.white.opacity(0.06) : Color.black.opacity(0.06)
+                    )
                     .frame(height: 0.5)
             }
 
@@ -2847,14 +3276,20 @@ struct AgentLogWindowView: View {
                         .background(
                             ZStack {
                                 RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                    .fill(colorScheme == .dark ? Color.white.opacity(0.04) : Color.white.opacity(0.50))
+                                    .fill(
+                                        colorScheme == .dark
+                                            ? Color.white.opacity(0.04) : Color.white.opacity(0.50))
 
                                 RoundedRectangle(cornerRadius: 10, style: .continuous)
                                     .stroke(
                                         LinearGradient(
                                             colors: [
-                                                colorScheme == .dark ? Color.white.opacity(0.10) : Color.white.opacity(0.70),
-                                                colorScheme == .dark ? Color.white.opacity(0.03) : Color.black.opacity(0.04)
+                                                colorScheme == .dark
+                                                    ? Color.white.opacity(0.10)
+                                                    : Color.white.opacity(0.70),
+                                                colorScheme == .dark
+                                                    ? Color.white.opacity(0.03)
+                                                    : Color.black.opacity(0.04),
                                             ],
                                             startPoint: .topLeading,
                                             endPoint: .bottomTrailing
@@ -2868,7 +3303,9 @@ struct AgentLogWindowView: View {
                 .padding(.vertical, 10)
 
                 Rectangle()
-                    .fill(colorScheme == .dark ? Color.white.opacity(0.06) : Color.black.opacity(0.06))
+                    .fill(
+                        colorScheme == .dark ? Color.white.opacity(0.06) : Color.black.opacity(0.06)
+                    )
                     .frame(height: 0.5)
             }
 
@@ -2879,7 +3316,7 @@ struct AgentLogWindowView: View {
                         if displayedLogText == "No AI activity yet." {
                             AgentEmptyState()
                         } else {
-                            AgentChatLogView(logText: displayedLogText)
+                            AgentChatLogView(logText: displayedLogText, screenshotsByStep: displayedScreenshotsByStep)
                         }
 
                         Color.clear

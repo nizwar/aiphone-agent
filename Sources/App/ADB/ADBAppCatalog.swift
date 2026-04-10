@@ -98,14 +98,22 @@ enum ADBAppCatalog {
         let trimmed = appNameOrPackage.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return [] }
 
-        let normalizedQuery = normalizedLookupKey(trimmed)
+        // Extract package from "AppName (com.package.name)" format that ListApp returns.
+        let extracted = extractPackageFromDisplayFormat(trimmed)
+
+        let normalizedQuery = normalizedLookupKey(extracted.appName)
         var candidates: [String] = []
 
-        if trimmed.contains(".") {
-            candidates.append(trimmed)
+        // If a package was extracted from parens, prioritise it.
+        if let pkg = extracted.packageName {
+            candidates.append(pkg)
         }
 
-        if let exact = packageMappings[trimmed] {
+        if extracted.appName.contains(".") && extracted.appName.range(of: "^[a-zA-Z0-9._]+$", options: .regularExpression) != nil {
+            candidates.append(extracted.appName)
+        }
+
+        if let exact = packageMappings[extracted.appName] {
             candidates.append(exact)
         }
 
@@ -138,6 +146,23 @@ enum ADBAppCatalog {
         }
 
         return Array(installedPackages.sorted().prefix(limit))
+    }
+
+    /// Parse "AppName (com.package.name)" into its components.
+    /// Returns the app name (without the parenthesized suffix) and an optional package name.
+    private static func extractPackageFromDisplayFormat(_ text: String) -> (appName: String, packageName: String?) {
+        // Match pattern: "Some Name (com.example.app)"
+        let pattern = "^(.+?)\\s*\\(([a-zA-Z0-9._]+)\\)$"
+        if let regex = try? NSRegularExpression(pattern: pattern),
+           let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
+           match.numberOfRanges == 3,
+           let nameRange = Range(match.range(at: 1), in: text),
+           let pkgRange = Range(match.range(at: 2), in: text) {
+            let name = String(text[nameRange]).trimmingCharacters(in: .whitespacesAndNewlines)
+            let pkg = String(text[pkgRange])
+            return (name, pkg)
+        }
+        return (text, nil)
     }
 
     private static func normalizedLookupKey(_ text: String) -> String {
