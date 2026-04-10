@@ -1,7 +1,7 @@
 import SwiftUI
 import AppKit
 
-struct ADBDeviceSnapshot: Identifiable, Sendable {
+struct ADBDeviceSnapshot: Identifiable, Equatable, Sendable {
     var id: String { info.id }
 
     let info: ADBDeviceInfo
@@ -177,7 +177,7 @@ final class ADBDevicesStore: ObservableObject {
         includeScreenshot: Bool
     ) -> ADBDeviceSnapshot {
         let screenshot = includeScreenshot ? (try? provider.getScreenshot(deviceID: device.deviceID, includeBase64: false)) : nil
-        let screenshotData = (screenshot?.pngData.isEmpty == false && !(screenshot?.isSensitive ?? false)) ? screenshot?.pngData : nil
+        let screenshotData = (screenshot?.imageData.isEmpty == false && !(screenshot?.isSensitive ?? false)) ? screenshot?.imageData : nil
         let runtimeStatus = provider.getDeviceRuntimeStatus(deviceID: device.deviceID)
 
         return ADBDeviceSnapshot(

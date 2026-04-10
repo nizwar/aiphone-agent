@@ -228,6 +228,7 @@ struct ContentView: View {
     @State private var promptHistory: [String] = []
     @State private var promptHistoryIndex: Int?
     @State private var draftPromptBeforeHistoryNavigation = ""
+    @State private var selectedDeviceIDs: Set<String> = []
 
     var body: some View {
         VStack(spacing: 0) {
@@ -303,8 +304,8 @@ struct ContentView: View {
                 }
 
                 ToolbarStatusStrip(
-                    deviceCount: devicesStore.snapshots.count,
-                    readyCount: readySnapshots.count,
+                    snapshots: devicesStore.snapshots,
+                    selectedDeviceIDs: $selectedDeviceIDs,
                     modelName: aiSettings.openGLMModel,
                     isRunning: agentRunStore.isRunning
                 )
@@ -369,6 +370,15 @@ struct ContentView: View {
         .onChange(of: aiSettings.scrcpyExecutablePath) { _ in
             scrcpyLaunchStore.refreshAvailability()
         }
+        .onChange(of: devicesStore.snapshots) { newSnapshots in
+            let readyIDs = Set(newSnapshots.filter { $0.info.isAvailable }.map { $0.info.deviceID })
+            // Auto-select newly connected devices
+            for id in readyIDs where !selectedDeviceIDs.contains(id) {
+                selectedDeviceIDs.insert(id)
+            }
+            // Remove devices that are no longer present
+            selectedDeviceIDs = selectedDeviceIDs.intersection(readyIDs)
+        }
         .onReceive(
             NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)
         ) { _ in
@@ -421,10 +431,12 @@ struct ContentView: View {
         let trimmedPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedPrompt.isEmpty else { return }
 
-        let availableSnapshots = devicesStore.snapshots.filter { $0.info.isAvailable }
+        let availableSnapshots = devicesStore.snapshots.filter {
+            $0.info.isAvailable && selectedDeviceIDs.contains($0.info.deviceID)
+        }
         guard !availableSnapshots.isEmpty else {
             agentRunStore.presentIssue(
-                "No ready devices found. Connect a device and refresh the list first.")
+                "No selected devices found. Select at least one device from the device menu.")
             return
         }
 
@@ -689,18 +701,71 @@ struct ToolbarIconMenu<MenuContent: View>: View {
 
 struct ToolbarStatusStrip: View {
     @Environment(\.colorScheme) private var colorScheme
-    let deviceCount: Int
-    let readyCount: Int
+    let snapshots: [ADBDeviceSnapshot]
+    @Binding var selectedDeviceIDs: Set<String>
     let modelName: String
     let isRunning: Bool
 
+    private var readySnapshots: [ADBDeviceSnapshot] {
+        snapshots.filter { $0.info.isAvailable }
+    }
+
+    private var selectedCount: Int {
+        readySnapshots.filter { selectedDeviceIDs.contains($0.info.deviceID) }.count
+    }
+
+    private var allSelected: Bool {
+        !readySnapshots.isEmpty && readySnapshots.allSatisfy { selectedDeviceIDs.contains($0.info.deviceID) }
+    }
+
     var body: some View {
         HStack(spacing: 6) {
-            statusChip(
-                icon: "iphone.gen3",
-                text: "\(readyCount)/\(deviceCount)",
-                tint: readyCount > 0 ? .green : .secondary
-            )
+            Menu {
+                Button {
+                    if allSelected {
+                        selectedDeviceIDs.removeAll()
+                    } else {
+                        selectedDeviceIDs = Set(readySnapshots.map { $0.info.deviceID })
+                    }
+                } label: {
+                    Label(
+                        allSelected ? "Deselect All" : "Select All Devices",
+                        systemImage: allSelected ? "checkmark.circle.fill" : "circle")
+                }
+
+                Divider()
+
+                if readySnapshots.isEmpty {
+                    Text("No devices connected")
+                } else {
+                    ForEach(readySnapshots) { snapshot in
+                        Button {
+                            let id = snapshot.info.deviceID
+                            if selectedDeviceIDs.contains(id) {
+                                selectedDeviceIDs.remove(id)
+                            } else {
+                                selectedDeviceIDs.insert(id)
+                            }
+                        } label: {
+                            Label {
+                                Text(snapshot.info.model ?? snapshot.info.deviceID)
+                            } icon: {
+                                Image(systemName: selectedDeviceIDs.contains(snapshot.info.deviceID)
+                                    ? "checkmark.square.fill" : "square")
+                            }
+                        }
+                    }
+                }
+            } label: {
+                statusChip(
+                    icon: "iphone.gen3",
+                    text: "\(selectedCount)/\(readySnapshots.count)",
+                    tint: selectedCount > 0 ? .green : .secondary
+                )
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
 
             chipSeparator
 
