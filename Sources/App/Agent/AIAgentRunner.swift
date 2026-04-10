@@ -558,6 +558,22 @@ private struct NativePhoneAgent: Sendable {
             )
         ]
 
+        // Capture an initial screenshot and attach it alongside the system prompt so
+        // the model has visual context from the very first API call.
+        await statusHandler("Capturing initial screen state…")
+        let initialScreenshot = try provider.getScreenshot(deviceID: deviceID)
+        if !initialScreenshot.imageData.isEmpty {
+            await screenshotHandler(initialScreenshot.imageData, 0)
+        }
+        await logger("Info: Initial screenshot \(initialScreenshot.compressionSummary)\n")
+        context.append(
+            .user(
+                text: "Initial screen state before starting the task.",
+                imageBase64: initialScreenshot.base64Data,
+                imageMimeType: initialScreenshot.imageMimeType
+            )
+        )
+
         for step in 1...configuration.maxSteps {
             try Task.checkCancellation()
             if await cancellationChecker() {
