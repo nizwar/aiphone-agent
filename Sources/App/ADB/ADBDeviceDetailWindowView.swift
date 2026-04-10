@@ -616,8 +616,8 @@ private struct DeviceOverviewSidebar: View {
                         let insetRect = rect.insetBy(dx: 6, dy: 18)
                         onPreviewRectChanged(insetRect)
                     })
-
-                // Mirror toggle button
+            }
+            .overlay(alignment: .bottom) {
                 if snapshot.info.isAvailable {
                     Button(action: {
                         if screenMirrorStore.isMirroring(deviceID: snapshot.info.deviceID, tag: "detail") {
@@ -650,7 +650,7 @@ private struct DeviceOverviewSidebar: View {
                         )
                     }
                     .buttonStyle(.plain)
-                    .padding(.top, 8)
+                    .padding(.bottom, 10)
                 }
             }
             .overlay(alignment: .topLeading) {
@@ -695,24 +695,27 @@ private struct DeviceOverviewSidebar: View {
             }
 
             // Device info
-            VStack(alignment: .leading, spacing: 2) {
-                Text(snapshot.info.model ?? "Android Device")
-                    .font(.system(size: 14, weight: .semibold))
-                    .lineLimit(1)
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(snapshot.info.model ?? "Android Device")
+                        .font(.system(size: 14, weight: .semibold))
+                        .lineLimit(1)
 
-                Text(snapshot.info.deviceID)
-                    .font(.system(size: 9, design: .monospaced))
-                    .foregroundStyle(.tertiary)
-                    .textSelection(.enabled)
+                    Text(snapshot.info.deviceID)
+                        .font(.system(size: 9, design: .monospaced))
+                        .foregroundStyle(.tertiary)
+                        .textSelection(.enabled)
+                }
 
                 Spacer()
                 DeviceStatusBadge(text: statusText, color: statusColor)
             }
 
-            HStack(spacing: 6) {
+            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 6) {
                 DeviceMetaPill(systemImage: connectionIcon, text: connectionLabel)
                 DeviceMetaPill(systemImage: batteryIcon, text: batteryText)
                 DeviceMetaPill(systemImage: wifiIcon, text: wifiText)
+                DeviceMetaPill(systemImage: "antenna.radiowaves.left.and.right", text: dataText)
             }
 
             if let currentApp = snapshot.currentApp, !currentApp.isEmpty {
