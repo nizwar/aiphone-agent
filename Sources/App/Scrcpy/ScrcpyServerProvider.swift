@@ -182,8 +182,9 @@ enum ScrcpyServerProvider {
             "audio=false",
             "control=false",
             "cleanup=\(config.cleanup)",
-            "raw_stream=true",
+            "raw_stream=false",
             "send_frame_meta=true",
+            "video_codec=h264",
             "max_size=\(config.maxSize)",
         ]
         serverArgs.append(contentsOf: config.extraParams)
