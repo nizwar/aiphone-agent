@@ -800,12 +800,14 @@ final class ADBProvider: ADBProviding, @unchecked Sendable {
 
         if stderr.contains("status: -1") || stderr.contains("failed") {
             return ADBScreenshot(
-                pngData: Data(),
+                imageData: Data(),
                 base64Data: "",
                 imageMimeType: "image/png",
                 width: 0,
                 height: 0,
-                isSensitive: true
+                isSensitive: true,
+                originalSize: 0,
+                compressedSize: 0
             )
         }
 
@@ -814,15 +816,26 @@ final class ADBProvider: ADBProviding, @unchecked Sendable {
             return nil
         }
 
-        let payload = includeBase64 ? transportImagePayload(from: pngData) : nil
+        let originalBytes = pngData.count
+        let compressedData: Data
+        let mimeType: String
+        if let jpeg = jpegData(from: pngData, quality: 0.6) {
+            compressedData = jpeg
+            mimeType = "image/jpeg"
+        } else {
+            compressedData = pngData
+            mimeType = "image/png"
+        }
 
         return ADBScreenshot(
-            pngData: pngData,
-            base64Data: payload?.data.base64EncodedString() ?? "",
-            imageMimeType: payload?.mimeType ?? "image/png",
+            imageData: compressedData,
+            base64Data: includeBase64 ? compressedData.base64EncodedString() : "",
+            imageMimeType: mimeType,
             width: originalSize.width,
             height: originalSize.height,
-            isSensitive: false
+            isSensitive: false,
+            originalSize: originalBytes,
+            compressedSize: compressedData.count
         )
     }
 
@@ -1021,6 +1034,11 @@ final class ADBProvider: ADBProviding, @unchecked Sendable {
     }
 
     private func launchInstalledPackage(_ package: String, deviceID: String?, delay: TimeInterval?) throws -> Bool {
+        // Reject anything that isn't a valid Android package name to avoid shell injection.
+        guard package.range(of: "^[a-zA-Z0-9._]+$", options: .regularExpression) != nil else {
+            return false
+        }
+
         let result = try runADB(
             ["shell", "monkey", "-p", package, "-c", "android.intent.category.LAUNCHER", "1"],
             deviceID: deviceID
@@ -1283,15 +1301,16 @@ final class ADBProvider: ADBProviding, @unchecked Sendable {
         }
 
         if includeBase64 || cached.screenshot.base64Data.isEmpty == false {
-            if includeBase64, cached.screenshot.base64Data.isEmpty, !cached.screenshot.pngData.isEmpty {
-                let payload = transportImagePayload(from: cached.screenshot.pngData)
+            if includeBase64, cached.screenshot.base64Data.isEmpty, !cached.screenshot.imageData.isEmpty {
                 let updated = ADBScreenshot(
-                    pngData: cached.screenshot.pngData,
-                    base64Data: payload.data.base64EncodedString(),
-                    imageMimeType: payload.mimeType,
+                    imageData: cached.screenshot.imageData,
+                    base64Data: cached.screenshot.imageData.base64EncodedString(),
+                    imageMimeType: cached.screenshot.imageMimeType,
                     width: cached.screenshot.width,
                     height: cached.screenshot.height,
-                    isSensitive: cached.screenshot.isSensitive
+                    isSensitive: cached.screenshot.isSensitive,
+                    originalSize: cached.screenshot.originalSize,
+                    compressedSize: cached.screenshot.compressedSize
                 )
                 screenshotCache[cacheKey] = CachedScreenshotEntry(screenshot: updated, capturedAt: cached.capturedAt)
                 return updated
@@ -1308,23 +1327,16 @@ final class ADBProvider: ADBProviding, @unchecked Sendable {
         screenshotCacheLock.unlock()
     }
 
-    private func transportImagePayload(from pngData: Data) -> (data: Data, mimeType: String) {
-        if let webpData = webPData(from: pngData, quality: 0.5), webpData.count < pngData.count {
-            return (webpData, "image/webp")
-        }
-        return (pngData, "image/png")
-    }
 
-    private func webPData(from imageData: Data, quality: CGFloat) -> Data? {
-        let supportedTypes = CGImageDestinationCopyTypeIdentifiers() as? [String] ?? []
-        guard supportedTypes.contains(UTType.webP.identifier) else { return nil }
+
+    private func jpegData(from imageData: Data, quality: CGFloat) -> Data? {
         guard let source = CGImageSourceCreateWithData(imageData as CFData, nil),
               let image = CGImageSourceCreateImageAtIndex(source, 0, [kCGImageSourceShouldCacheImmediately: false] as CFDictionary) else {
             return nil
         }
 
         let outputData = NSMutableData()
-        guard let destination = CGImageDestinationCreateWithData(outputData, UTType.webP.identifier as CFString, 1, nil) else {
+        guard let destination = CGImageDestinationCreateWithData(outputData, UTType.jpeg.identifier as CFString, 1, nil) else {
             return nil
         }
 
@@ -1379,7 +1391,7 @@ final class ADBProvider: ADBProviding, @unchecked Sendable {
             bytesPerRow: 0,
             bitsPerPixel: 0
         ) else {
-            return ADBScreenshot(pngData: Data(), base64Data: "", imageMimeType: "image/png", width: width, height: height, isSensitive: isSensitive)
+            return ADBScreenshot(imageData: Data(), base64Data: "", imageMimeType: "image/png", width: width, height: height, isSensitive: isSensitive, originalSize: 0, compressedSize: 0)
         }
 
         NSGraphicsContext.saveGraphicsState()
@@ -1390,12 +1402,14 @@ final class ADBProvider: ADBProviding, @unchecked Sendable {
 
         let pngData = bitmap.representation(using: .png, properties: [:]) ?? Data()
         return ADBScreenshot(
-            pngData: pngData,
+            imageData: pngData,
             base64Data: pngData.base64EncodedString(),
             imageMimeType: "image/png",
             width: width,
             height: height,
-            isSensitive: isSensitive
+            isSensitive: isSensitive,
+            originalSize: pngData.count,
+            compressedSize: pngData.count
         )
     }
 }

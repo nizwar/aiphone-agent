@@ -37,12 +37,33 @@ struct ADBCommandResult: Sendable {
 }
 
 struct ADBScreenshot: Sendable {
-    let pngData: Data
+    let imageData: Data
     let base64Data: String
     let imageMimeType: String
     let width: Int
     let height: Int
     let isSensitive: Bool
+    let originalSize: Int
+    let compressedSize: Int
+
+    var compressionSummary: String {
+        "\(Self.formatBytes(originalSize)) → \(Self.formatBytes(compressedSize))"
+    }
+
+    static func formatBytes(_ bytes: Int) -> String {
+        switch bytes {
+        case 0:
+            return "0 Bytes"
+        case 1..<1024:
+            return "\(bytes) Bytes"
+        case 1024..<1_048_576:
+            return String(format: "%.1f KB", Double(bytes) / 1024.0)
+        case 1_048_576..<1_073_741_824:
+            return String(format: "%.2f MB", Double(bytes) / 1_048_576.0)
+        default:
+            return String(format: "%.2f GB", Double(bytes) / 1_073_741_824.0)
+        }
+    }
 }
 
 struct ADBDeviceRuntimeStatus: Sendable {
