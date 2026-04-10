@@ -1,16 +1,14 @@
 import Foundation
 import SwiftUI
 
-enum OpenGLMModelOption: String, CaseIterable, Identifiable, Sendable {
-    case autoglmPhoneMultilingual = "autoglm-phone-multilingual"
-
-    var id: String { rawValue }
-}
-
 private enum DeprecatedModelCatalog {
-    static let hiddenValues: Set<String> = [
-        "autoglm-phone-9b-multilingual"
-    ]
+    static var hiddenValues: Set<String> {
+        var hidden = Set<String>()
+        for provider in AIModelProviderRegistry.allProviders {
+            hidden.formUnion(provider.type.hiddenModels)
+        }
+        return hidden
+    }
 
     static func sanitized(_ models: [String]) -> [String] {
         models
@@ -18,10 +16,10 @@ private enum DeprecatedModelCatalog {
             .filter { !$0.isEmpty && !hiddenValues.contains($0) }
     }
 
-    static func normalizedOpenGLMSelection(_ value: String?) -> String {
+    static func normalizedOpenGLMSelection(_ value: String?, providerType: any AIModelProvider.Type = AutoGLMModelProvider.self) -> String {
         let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         guard !trimmed.isEmpty, !hiddenValues.contains(trimmed) else {
-            return OpenGLMModelOption.autoglmPhoneMultilingual.rawValue
+            return providerType.defaultModelName
         }
         return trimmed
     }
@@ -86,6 +84,7 @@ enum AppSettingsKeys {
     static let languageEnhancerServer = "ai.settings.languageEnhancer.server"
     static let languageEnhancerKey = "ai.settings.languageEnhancer.key"
     static let languageEnhancerModel = "ai.settings.languageEnhancer.model"
+    static let selectedModelProvider = "ai.settings.modelProvider"
     static let adbExecutablePath = "app.settings.adb.path"
     static let scrcpyExecutablePath = "app.settings.scrcpy.path"
     static let scrcpyAlwaysOnTop = "app.settings.scrcpy.alwaysOnTop"
@@ -216,6 +215,10 @@ enum ScrcpyGamepadModeOption: String, CaseIterable, Identifiable {
 @MainActor
 final class AISettingsStore: ObservableObject {
     static let shared = AISettingsStore()
+
+    @Published var selectedModelProvider: String {
+        didSet { defaults.set(selectedModelProvider, forKey: AppSettingsKeys.selectedModelProvider) }
+    }
 
     @Published var openGLMServer: String {
         didSet { defaults.set(openGLMServer, forKey: AppSettingsKeys.openGLMServer) }
@@ -422,10 +425,14 @@ final class AISettingsStore: ObservableObject {
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
+        let selectedProvider = defaults.string(forKey: AppSettingsKeys.selectedModelProvider) ?? AIModelProviderRegistry.defaultProviderID()
+        self.selectedModelProvider = selectedProvider
+        let providerType = AIModelProviderRegistry.providerType(for: selectedProvider) ?? AutoGLMModelProvider.self
         self.openGLMServer = defaults.string(forKey: AppSettingsKeys.openGLMServer) ?? "http://localhost:8000/v1"
         self.openGLMKey = defaults.string(forKey: AppSettingsKeys.openGLMKey) ?? ""
         self.openGLMModel = DeprecatedModelCatalog.normalizedOpenGLMSelection(
-            defaults.string(forKey: AppSettingsKeys.openGLMModel)
+            defaults.string(forKey: AppSettingsKeys.openGLMModel),
+            providerType: providerType
         )
         self.languageEnhancerServer = defaults.string(forKey: AppSettingsKeys.languageEnhancerServer) ?? "https://localhost:11434/"
         self.languageEnhancerKey = defaults.string(forKey: AppSettingsKeys.languageEnhancerKey) ?? ""
@@ -466,7 +473,16 @@ final class AISettingsStore: ObservableObject {
         self.availableLanguageEnhancerModels = []
     }
 
+    var resolvedModelProvider: any AIModelProvider {
+        AIModelProviderRegistry.provider(for: selectedModelProvider) ?? AutoGLMModelProvider()
+    }
+
+    var resolvedModelProviderType: any AIModelProvider.Type {
+        AIModelProviderRegistry.providerType(for: selectedModelProvider) ?? AutoGLMModelProvider.self
+    }
+
     func save() {
+        defaults.set(selectedModelProvider, forKey: AppSettingsKeys.selectedModelProvider)
         defaults.set(openGLMServer, forKey: AppSettingsKeys.openGLMServer)
         defaults.set(openGLMKey, forKey: AppSettingsKeys.openGLMKey)
         defaults.set(openGLMModel, forKey: AppSettingsKeys.openGLMModel)
@@ -744,7 +760,7 @@ final class AISettingsStore: ObservableObject {
 
                 availableOpenGLMModels = models
                 if openGLMModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    openGLMModel = models.first ?? OpenGLMModelOption.autoglmPhoneMultilingual.rawValue
+                    openGLMModel = models.first ?? resolvedModelProviderType.defaultModelName
                 }
 
                 if models.isEmpty {

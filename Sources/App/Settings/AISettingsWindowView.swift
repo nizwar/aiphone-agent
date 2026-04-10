@@ -190,9 +190,13 @@ private struct AIModelsPane: View {
         }
     }
 
+    private var selectedProviderType: any AIModelProvider.Type {
+        settings.resolvedModelProviderType
+    }
+
     private var uniqueOpenGLMModels: [String] {
         uniqueModels(
-            from: OpenGLMModelOption.allCases.map(\.rawValue) + settings.availableOpenGLMModels,
+            from: selectedProviderType.builtInModels + settings.availableOpenGLMModels,
             current: settings.openGLMModel
         )
     }
@@ -302,8 +306,30 @@ private struct AIModelsPane: View {
                         .foregroundStyle(settings.hasUnsavedChanges ? .orange : .secondary)
                 }
 
+                SettingsRow(title: "AI Provider") {
+                    Picker("", selection: $settings.selectedModelProvider) {
+                        ForEach(AIModelProviderRegistry.allProviders, id: \.id) { entry in
+                            Text(entry.type.displayName).tag(entry.id)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.segmented)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .onChange(of: settings.selectedModelProvider) { _ in
+                        let providerType = settings.resolvedModelProviderType
+                        if !providerType.builtInModels.contains(settings.openGLMModel) {
+                            settings.openGLMModel = providerType.defaultModelName
+                        }
+                    }
+                }
+
+                Text(selectedProviderType.summary)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.tertiary)
+                    .padding(.bottom, 2)
+
                 SettingsSectionCard(
-                    title: "OpenGLM",
+                    title: selectedProviderType.displayName,
                     statusText: openGLMStatus.0,
                     statusColor: openGLMStatus.1,
                     actionTitle: settings.openGLMValidation.isValidating ? "Checking..." : "Validate",

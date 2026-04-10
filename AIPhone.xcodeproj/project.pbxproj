@@ -17,11 +17,15 @@
 		50D248E2B453B9E76225FE40 /* AppIcon.png in Resources */ = {isa = PBXBuildFile; fileRef = 5DA8D77CC13427179244879D /* AppIcon.png */; };
 		5C3E5DFAEEC77A684A18D441 /* BrandMark.png in Resources */ = {isa = PBXBuildFile; fileRef = 6FA3D0076C4D786FE3DAEC85 /* BrandMark.png */; };
 		5D0D21D88F44F3498FA48C05 /* ADBProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 891EB608C998589EE0FA57DB /* ADBProvider.swift */; };
+		63CBBE2E0EBBF806D36AABF2 /* OpenAIModelProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8AF47CEFD6EF9A65370C385 /* OpenAIModelProvider.swift */; };
 		65B70BE15BB619B9FD17BEA7 /* AppMain.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1F9CA03F8C6207BE42CDA7C /* AppMain.swift */; };
 		6D450EBB1939EC6179169F48 /* SharedFrameBuffer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 017B9493F3782D599BC5D6F4 /* SharedFrameBuffer.swift */; };
 		6DCEA16DD9E8BF2980BDF0B6 /* CameraStreamStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 63DC3AEF8087B24AB46CF1DF /* CameraStreamStore.swift */; };
+		7320C85304B66C30CD578024 /* H264StreamDecoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D3DFC7B6D22139CC8EFA65B /* H264StreamDecoder.swift */; };
+		796A51F45A3788EF675223CA /* AIModelProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = C42E8CE39AAE3B9DD0233C1B /* AIModelProvider.swift */; };
 		7A7D28AEE5166716129D479C /* ScreenMirrorStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 84D11696BEC0756E941D145A /* ScreenMirrorStore.swift */; };
 		995AD9A085CC6DAA3532E0D8 /* AIAgentRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C53CE12F9B36458DA67F906 /* AIAgentRunner.swift */; };
+		998E95E137B2436E2CD371AA /* AutoGLMModelProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = C827840396E1CC3A7DEACFF6 /* AutoGLMModelProvider.swift */; };
 		9CAE2F09050BF31FAB44A9B7 /* AudioTranscriptionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A167DA2A4276B41A299CCF50 /* AudioTranscriptionStore.swift */; };
 		9E27E85E90CC82B039E8005D /* SharedFrameBuffer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 017B9493F3782D599BC5D6F4 /* SharedFrameBuffer.swift */; };
 		A569356780E9365E75CD0C97 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = CE0670C646944726F72BEFED /* Assets.xcassets */; };
@@ -71,6 +75,7 @@
 		5C27BEE09F0EF42D228BFAB1 /* AIPhone.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AIPhone.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		5DA8D77CC13427179244879D /* AppIcon.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = AppIcon.png; sourceTree = "<group>"; };
 		63DC3AEF8087B24AB46CF1DF /* CameraStreamStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraStreamStore.swift; sourceTree = "<group>"; };
+		6D3DFC7B6D22139CC8EFA65B /* H264StreamDecoder.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = H264StreamDecoder.swift; sourceTree = "<group>"; };
 		6FA3D0076C4D786FE3DAEC85 /* BrandMark.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = BrandMark.png; sourceTree = "<group>"; };
 		72DC14E87A767D04373B977D /* ADBDeviceDetailWindowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ADBDeviceDetailWindowView.swift; sourceTree = "<group>"; };
 		84D11696BEC0756E941D145A /* ScreenMirrorStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenMirrorStore.swift; sourceTree = "<group>"; };
@@ -84,8 +89,11 @@
 		B1F9CA03F8C6207BE42CDA7C /* AppMain.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppMain.swift; sourceTree = "<group>"; };
 		B65598B7C31A31869A8EDC7A /* ADBAppManagerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ADBAppManagerView.swift; sourceTree = "<group>"; };
 		B7B33D7FCA9EB3F4324E8073 /* ADBDevicesWindowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ADBDevicesWindowView.swift; sourceTree = "<group>"; };
+		C42E8CE39AAE3B9DD0233C1B /* AIModelProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIModelProvider.swift; sourceTree = "<group>"; };
+		C827840396E1CC3A7DEACFF6 /* AutoGLMModelProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutoGLMModelProvider.swift; sourceTree = "<group>"; };
 		CE0670C646944726F72BEFED /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		D21DEC35A60A4AC16B7AA1A8 /* AISettingsWindowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AISettingsWindowView.swift; sourceTree = "<group>"; };
+		D8AF47CEFD6EF9A65370C385 /* OpenAIModelProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenAIModelProvider.swift; sourceTree = "<group>"; };
 		F321F2F59064F7A259C70A2B /* ADBFileExplorerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ADBFileExplorerView.swift; sourceTree = "<group>"; };
 		FA304BB002CECCD84916E78E /* ADBAppCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ADBAppCatalog.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -180,6 +188,9 @@
 			children = (
 				1C53CE12F9B36458DA67F906 /* AIAgentRunner.swift */,
 				01BBF50A819495404B9FECDE /* AIEndpointValidator.swift */,
+				C42E8CE39AAE3B9DD0233C1B /* AIModelProvider.swift */,
+				C827840396E1CC3A7DEACFF6 /* AutoGLMModelProvider.swift */,
+				D8AF47CEFD6EF9A65370C385 /* OpenAIModelProvider.swift */,
 			);
 			path = Agent;
 			sourceTree = "<group>";
@@ -207,6 +218,7 @@
 				63DC3AEF8087B24AB46CF1DF /* CameraStreamStore.swift */,
 				84D11696BEC0756E941D145A /* ScreenMirrorStore.swift */,
 				31208DD0100686CFB00F165B /* VirtualCameraProvider.swift */,
+				6D3DFC7B6D22139CC8EFA65B /* H264StreamDecoder.swift */,
 			);
 			path = Camera;
 			sourceTree = "<group>";
@@ -234,8 +246,6 @@
 			dependencies = (
 			);
 			name = CameraExtension;
-			packageProductDependencies = (
-			);
 			productName = CameraExtension;
 			productReference = 8E56DAE54C3AF43D24782F1E /* CameraExtension.systemextension */;
 			productType = "com.apple.product-type.system-extension";
@@ -254,8 +264,6 @@
 				705772886920A2FDFB285D54 /* PBXTargetDependency */,
 			);
 			name = AIPhone;
-			packageProductDependencies = (
-			);
 			productName = AIPhone;
 			productReference = 5C27BEE09F0EF42D228BFAB1 /* AIPhone.app */;
 			productType = "com.apple.product-type.application";
@@ -336,17 +344,21 @@
 				5D0D21D88F44F3498FA48C05 /* ADBProvider.swift in Sources */,
 				995AD9A085CC6DAA3532E0D8 /* AIAgentRunner.swift in Sources */,
 				E8DE5FEF617F5F1F4EF18307 /* AIEndpointValidator.swift in Sources */,
+				796A51F45A3788EF675223CA /* AIModelProvider.swift in Sources */,
 				1083C3C9AE4CEAF683EC7780 /* AISettingsStore.swift in Sources */,
 				27E28DE0B78EE4E2BAD530F8 /* AISettingsWindowView.swift in Sources */,
 				65B70BE15BB619B9FD17BEA7 /* AppMain.swift in Sources */,
 				9CAE2F09050BF31FAB44A9B7 /* AudioTranscriptionStore.swift in Sources */,
+				998E95E137B2436E2CD371AA /* AutoGLMModelProvider.swift in Sources */,
 				45E9DBDA5A8501C779158834 /* CameraOptionsStore.swift in Sources */,
 				6DCEA16DD9E8BF2980BDF0B6 /* CameraStreamStore.swift in Sources */,
+				63CBBE2E0EBBF806D36AABF2 /* OpenAIModelProvider.swift in Sources */,
 				C558E21E75701A56B7D5499A /* ScrcpyLaunchStore.swift in Sources */,
 				3F9FE0596A33C80D7608B87B /* ScrcpyServerProvider.swift in Sources */,
 				7A7D28AEE5166716129D479C /* ScreenMirrorStore.swift in Sources */,
 				6D450EBB1939EC6179169F48 /* SharedFrameBuffer.swift in Sources */,
 				E27E6C9EF78EB1AC3D2EE716 /* VirtualCameraProvider.swift in Sources */,
+				7320C85304B66C30CD578024 /* H264StreamDecoder.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
