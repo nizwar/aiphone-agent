@@ -4,7 +4,7 @@ AI-Phone is a native macOS SwiftUI application for Android device management and
 
 Author: Mochamad Nizwar Syafuan
 
-> **Important:** The built-in AI automation feature is designed exclusively for [Open-AutoGLM](https://github.com/zai-org/Open-AutoGLM) models. If you want to use a different AI agent or model provider, consider using [aiphone-agent](https://github.com/nizwar/aiphone-agent) instead — an MCP-based alternative that works with any compatible agent framework.
+> **Important:** The built-in AI automation feature is designed exclusively for [Open-AutoGLM](https://github.com/zai-org/Open-AutoGLM) models. If you want to use a different AI agent or model provider, consider using [aiphone-mcp](https://github.com/nizwar/aiphone-mcp) instead — an MCP-based alternative that works with any compatible agent framework.
 
 ## Overview
 
